@@ -1,5 +1,6 @@
 .dsh-meow/
 .toolchain/
+.toolchain
 local.properties
 keystore/
 keystore.properties
