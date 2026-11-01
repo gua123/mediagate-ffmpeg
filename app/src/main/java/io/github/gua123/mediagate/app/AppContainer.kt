@@ -1311,6 +1311,13 @@ class AppContainer(context: Context) :
      */
     val updateEnvironment: UpdateEnvironment = UpdateHost()
 
+    /**
+     * 更新源（2026-11-02）：正式版读 gua123/mediagate，ffmpegTest 读 gua123/mediagate-ffmpeg
+     * （[BuildConfig.UPDATE_REPO] 按构建类型覆盖）。两套 update.json 与 Release 资产完全分开，
+     * 版本号也各走各的线——测试版发版不再等正式版。
+     */
+    val updateSource: UpdateSource = UpdateSource.forRepo("gua123", BuildConfig.UPDATE_REPO)
+
     /** 更新下载用的 HTTP 传输（与 ASR 模型下载同一套 HttpURLConnection 实现）。 */
     val updateTransport: HttpTransport by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         HttpUrlConnectionTransport(userAgent = "mediagate-android-update")
@@ -1362,7 +1369,7 @@ class AppContainer(context: Context) :
 
         override fun openReleasesPage(): Boolean = runCatching {
             appContext.startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(UpdateSource.RELEASES_PAGE))
+                Intent(Intent.ACTION_VIEW, Uri.parse(updateSource.releasesPageUrl))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
             true

@@ -36,6 +36,8 @@ data class UpdateSource(
      * raw 通就用最新的，raw 不通才用它——两边都读时按 versionCode 取高者，不会"用旧的盖新的"。
      */
     val cdnManifestUrl: String? = DEFAULT_CDN_MANIFEST_URL,
+    /** 发布页（设置页「手动下载」出口）；不同构建读不同仓库。 */
+    val releasesPageUrl: String = RELEASES_PAGE,
     val apkHeaders: Map<String, String> = mapOf("Accept" to "application/octet-stream"),
 ) {
 
@@ -77,8 +79,25 @@ data class UpdateSource(
         const val DEFAULT_CDN_MANIFEST_URL: String =
             "https://cdn.jsdelivr.net/gh/gua123/mediagate@main/update.json"
 
-        /** 发布页（设置页里给用户的"手动下载"出口）。 */
+        /** 正式版的发布页（设置页里给用户的"手动下载"出口）。 */
         const val RELEASES_PAGE: String = "https://github.com/gua123/mediagate/releases"
+
+        /**
+         * 为任意**公开**仓库生成更新源（2026-11-02：自研 FFmpeg 测试版独立仓库）。
+         *
+         * 三条清单路径与正式版同口径（raw 的两条缓存键 + jsDelivr 镜像），只换 owner/repo：
+         * 测试版有自己的 update.json 与 Release 资产，版本号也只在自己那条线上推进，
+         * 和正式版互不干扰（设置页的「发布页」出口同样指向本仓库）。
+         */
+        fun forRepo(owner: String, repo: String): UpdateSource {
+            val raw = "https://raw.githubusercontent.com/" + owner + "/" + repo
+            return UpdateSource(
+                manifestUrl = raw + "/main/update.json",
+                mirrorManifestUrl = raw + "/refs/heads/main/update.json",
+                cdnManifestUrl = "https://cdn.jsdelivr.net/gh/" + owner + "/" + repo + "@main/update.json",
+                releasesPageUrl = "https://github.com/" + owner + "/" + repo + "/releases",
+            )
+        }
     }
 }
 

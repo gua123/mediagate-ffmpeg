@@ -519,6 +519,9 @@
 - **校验**：大小 → SHA-256 → **签名证书必须与当前安装包一致**，任一不过就拒绝安装并给中文原因。
 - **断线续传**：`.part` 临时文件 + Range 请求；服务端回了 200（不支持 Range）就从头重下，绝不拼接（同时躲开"大文件被截断"这类链路问题）。
 - **文案**：检查更新失败时明确提示"需要能访问 GitHub（可能需要代理）"，不谎报网络故障。
+- **2026-11-02 变更注记（自研 FFmpeg 测试版独立发布）**：测试版 `ffmpegTest` 的更新源改为独立公开仓库
+  `gua123/mediagate-ffmpeg`（`UpdateSource.forRepo` 按 `BuildConfig.UPDATE_REPO` 分流），版本线也从正式版拆开
+  （`ffmpegVersionCode/Name`，首版 0.1.84-ffmpeg / 85）；正式版仓库与 update.json 不受影响。
 
 ---
 

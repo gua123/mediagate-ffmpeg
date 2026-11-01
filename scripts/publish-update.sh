@@ -1,38 +1,46 @@
 #!/usr/bin/env bash
 #
-# 发布应用内更新（R20）：建 GitHub Release → 传 APK → 写 update.json 并提交。
+# 发布「自研 FFmpeg 测试版」的应用内更新（仓库 gua123/mediagate-ffmpeg，公开）。
+#
+# 流程：构建 ffmpegTest APK → 建 GitHub Release → 传 APK → 写 update.json（仓库根）→ 提交并推送。
+# App 端匿名读 raw 清单 + Release 资产，不需要任何 token。
 #
 # 用法：
-#   bash scripts/publish-update.sh                 # 构建 release 包并发布
-#   bash scripts/publish-update.sh --skip-build    # 复用已有的 app-release.apk
-#   NOTES="更新说明" bash scripts/publish-update.sh  # 指定更新说明（默认读 docs/release-notes-<版本>.md）
+#   bash scripts/publish-update.sh                 # 构建并发布
+#   bash scripts/publish-update.sh --skip-build    # 复用已有 ffmpegTest APK
+#   NOTES="更新说明" bash scripts/publish-update.sh
 #
-# 前置：
-#   - 版本号来自 app/build.gradle.kts 的 versionCode / versionName（发版前先改它）；
-#   - 推送凭据：环境变量 GH_TOKEN，或本机 ~/.git-credentials（git store 助手）；
-#   - 网络：GitHub 直连不稳时脚本会自动带上系统代理（环境变量 HTTPS_PROXY，或 /etc/profile 里的 https_proxy）。
+# 版本号（独立版本线，发版前先改）：
+#   app/build.gradle.kts 里的 ffmpegVersionCode / ffmpegVersionName
 #
-# 安全：脚本只用 token 调 GitHub API，**不打印 token**，也不把它写进任何文件。
+# 凭据：环境变量 GH_TOKEN，或本机 ~/.git-credentials（git credential store）。
+# 网络：本机 github.com 直连不通；API 走 /etc/profile 里的 https_proxy，git 已全局配 http.proxy。
+# 安全：脚本只用 token 调 GitHub API，不打印 token，也不把它写进任何文件。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 OWNER="gua123"
-REPO="mediagate"
+REPO="mediagate-ffmpeg"
+BUILD_TASK=":app:assembleFfmpegTest"
+APK="app/build/outputs/apk/ffmpegTest/app-ffmpegTest.apk"
 SKIP_BUILD=0
 [ "${1:-}" = "--skip-build" ] && SKIP_BUILD=1
 
-VERSION_CODE="$(grep -m1 'versionCode = ' app/build.gradle.kts | sed 's/[^0-9]//g')"
-VERSION_NAME="$(grep -m1 'versionName = ' app/build.gradle.kts | sed 's/.*"\(.*\)".*/\1/')"
+VERSION_CODE="$(grep -m1 '^val ffmpegVersionCode = ' app/build.gradle.kts | sed 's/[^0-9]//g')"
+VERSION_NAME="$(grep -m1 '^val ffmpegVersionName = ' app/build.gradle.kts | sed 's/.*"\(.*\)".*/\1/')"
+if [ -z "${VERSION_CODE:-}" ] || [ -z "${VERSION_NAME:-}" ]; then
+  echo "！！ 读不到 ffmpegVersionCode / ffmpegVersionName（见 app/build.gradle.kts）" >&2
+  exit 1
+fi
 TAG="v${VERSION_NAME}"
-APK="app/build/outputs/apk/release/app-release.apk"
 ASSET="mediagate-${VERSION_NAME}.apk"
 NOTES_FILE="docs/release-notes-${VERSION_NAME}.md"
 
-echo "== 发布 mediagate ${VERSION_NAME}（versionCode ${VERSION_CODE}）到 ${OWNER}/${REPO} =="
+echo "== 发布 mediagate-ffmpeg ${VERSION_NAME}（versionCode ${VERSION_CODE}）到 ${OWNER}/${REPO} =="
 
-# 代理：直连 github.com 常常 135 s 超时（本机实测），有代理就带上
+# 代理：直连 github.com 常常超时（本机实测），有代理就带上
 PROXY="${HTTPS_PROXY:-${https_proxy:-}}"
 if [ -z "$PROXY" ] && [ -r /etc/profile ]; then
   PROXY="$(grep -m1 'https_proxy=' /etc/profile | sed 's/.*="\(.*\)".*/\1/' || true)"
@@ -51,19 +59,19 @@ if [ -z "$TOKEN" ]; then
 fi
 
 api() {
-  "${CURL[@]}" -H "Authorization: Bearer $TOKEN" -H "User-Agent: mediagate-publish" \
+  "${CURL[@]}" -H "Authorization: Bearer $TOKEN" -H "User-Agent: mediagate-ffmpeg-publish" \
     -H "Accept: application/vnd.github+json" "$@"
 }
 
 # ---------------------------------------------------------------- 1. 构建
 if [ "$SKIP_BUILD" = "0" ]; then
-  echo "-- 构建 release 包（source scripts/env.sh 后跑 gradle）"
+  echo "-- 构建 ffmpegTest 包"
   # shellcheck disable=SC1091
   source scripts/env.sh >/dev/null 2>&1
-  ./gradlew :app:assembleRelease
+  ./gradlew "$BUILD_TASK"
 fi
 if [ ! -f "$APK" ]; then
-  echo "！！ 找不到 $APK（先跑 ./gradlew :app:assembleRelease）" >&2
+  echo "！！ 找不到 $APK（先跑 ./gradlew $BUILD_TASK）" >&2
   exit 1
 fi
 
@@ -77,7 +85,7 @@ if [ -z "$NOTES" ] && [ -f "$NOTES_FILE" ]; then
   NOTES="$(cat "$NOTES_FILE")"
 fi
 if [ -z "$NOTES" ]; then
-  NOTES="mediagate ${VERSION_NAME}（versionCode ${VERSION_CODE}）"
+  NOTES="mediagate-ffmpeg ${VERSION_NAME}（versionCode ${VERSION_CODE}）"
 fi
 
 PAYLOAD="$(python3 - "$TAG" "$VERSION_NAME" "$NOTES" <<'PY'
@@ -106,7 +114,6 @@ RELEASE_ID="$(printf '%s' "$BODY" | python3 -c 'import json,sys; print(json.load
 echo "-- Release id=$RELEASE_ID"
 
 # ---------------------------------------------------------------- 3. 传资产（同名先删再传，保证可重跑）
-# 注意：这里不能用 "python3 - <<PY" 读管道——heredoc 会占掉 stdin，json.load(sys.stdin) 拿到空串。
 api "https://api.github.com/repos/$OWNER/$REPO/releases/$RELEASE_ID/assets" -o /tmp/publish-assets.json
 EXISTING="$(python3 -c '
 import json, sys
@@ -121,20 +128,38 @@ if [ -n "$EXISTING" ]; then
   api -X DELETE "https://api.github.com/repos/$OWNER/$REPO/releases/assets/$EXISTING" -o /dev/null
 fi
 
-# 大文件上传强制 HTTP/1.1 并关掉 Expect: 100-continue：
-# 实测走代理时 HTTP/2 的 74 MB POST 会卡住（curl 读完全部字节却迟迟拿不到响应）。
+# 大文件上传强制 HTTP/1.1 并关掉 Expect: 100-continue（走代理时 HTTP/2 的 POST 会卡死）；
+# uploads.github.com 直连通常可用，失败再退回代理重试一次。
 ASSET_URL="$(api "https://api.github.com/repos/$OWNER/$REPO/releases/$RELEASE_ID" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["upload_url"].split("{")[0])')"
 echo "-- 上传 $ASSET → $ASSET_URL"
-# 上传走**直连**：实测代理下 74 MB 的 POST 会卡死（curl 读完全部字节却拿不到响应），
-# 而 uploads.github.com 直连是通的（302/0.7 s）。API 调用仍然走代理。
-curl -sS --http1.1 -X POST \
-  -H "Authorization: Bearer $TOKEN" -H "User-Agent: mediagate-publish" \
-  -H "Content-Type: application/vnd.android.package-archive" \
-  -H "Expect:" \
-  --data-binary @"$APK" \
-  "$ASSET_URL?name=$ASSET" \
-  -o /tmp/publish-asset.json -w 'HTTP %{http_code}\n'
+upload() {
+  curl -sS --http1.1 -X POST \
+    -H "Authorization: Bearer $TOKEN" -H "User-Agent: mediagate-ffmpeg-publish" \
+    -H "Content-Type: application/vnd.android.package-archive" \
+    -H "Expect:" \
+    --data-binary @"$APK" \
+    "$ASSET_URL?name=$ASSET" \
+    -o /tmp/publish-asset.json -w '%{http_code}'
+}
+UP_CODE="$(upload || true)"
+if [ "$UP_CODE" != "201" ]; then
+  echo "-- 直连上传返回 $UP_CODE，改用代理重试"
+  upload() {
+    curl -sS --http1.1 -x "$PROXY" -X POST \
+      -H "Authorization: Bearer $TOKEN" -H "User-Agent: mediagate-ffmpeg-publish" \
+      -H "Content-Type: application/vnd.android.package-archive" \
+      -H "Expect:" \
+      --data-binary @"$APK" \
+      "$ASSET_URL?name=$ASSET" \
+      -o /tmp/publish-asset.json -w '%{http_code}'
+  }
+  UP_CODE="$(upload || true)"
+fi
+if [ "$UP_CODE" != "201" ]; then
+  echo "！！ 上传失败（HTTP $UP_CODE）" >&2
+  exit 1
+fi
 python3 - <<'PY'
 import json
 d = json.load(open('/tmp/publish-asset.json'))
@@ -167,14 +192,14 @@ git add update.json
 if git diff --cached --quiet; then
   echo "-- update.json 无变化，跳过提交"
 else
-  git -c user.name="mediagate-publish" -c user.email="publish@local" commit -q -m "release: ${VERSION_NAME}（versionCode ${VERSION_CODE}）"
+  git -c user.name="mediagate-ffmpeg-publish" -c user.email="publish@local" commit -q -m "release: ${VERSION_NAME}（versionCode ${VERSION_CODE}）"
 fi
-echo "-- 推送（带代理）"
-GIT_TERMINAL_PROMPT=0 git ${PROXY:+-c http.proxy="$PROXY"} -c https.proxy="${PROXY:-}" push origin HEAD:main 2>&1 | tail -2
+echo "-- 推送"
+GIT_TERMINAL_PROMPT=0 git push origin HEAD:main 2>&1 | tail -2
 
 echo
 echo "== 完成 =="
 echo "  版本：${VERSION_NAME}（${VERSION_CODE}）"
 echo "  资产：$APK_URL"
 echo "  清单：https://raw.githubusercontent.com/$OWNER/$REPO/main/update.json"
-echo "  自检：curl -s https://raw.githubusercontent.com/$OWNER/$REPO/main/update.json"
+echo "  发布页：https://github.com/$OWNER/$REPO/releases"

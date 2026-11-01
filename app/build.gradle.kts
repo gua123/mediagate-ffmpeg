@@ -6,6 +6,17 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// ───────────────────────────── 版本线（2026-11-02） ─────────────────────────────
+// 正式版（Media3）：本工作区不再发布正式版，默认变体只为编译/测试保留。
+val formalVersionCode = 84
+val formalVersionName = "0.1.83"
+
+// 自研 FFmpeg 测试版：**独立版本线**，只在本仓库（gua123/mediagate-ffmpeg）推进。
+// 起始 85 是为了能覆盖安装手机上的 0.1.83-ffmpeg-d9（versionCode 84）；此后与正式版无关。
+// 更新清单见仓库根 update.json（scripts/publish-update.sh 发布时写入）。
+val ffmpegVersionCode = 85
+val ffmpegVersionName = "0.1.84-ffmpeg"
+
 // 源码级护栏读的**非编译输入**必须声明成 Test 输入（2026-10-15 真机事故后补）：
 // 清单少一个会话 action 时，SessionServiceDeclarationTest 本该报红，但 Gradle 因为"清单不是测试输入"
 // 判定测试 UP-TO-DATE 直接跳过 —— 护栏看着绿、其实根本没跑（改了 .kt 会重跑，因为编译产物是输入；
@@ -35,13 +46,15 @@ android {
         targetSdk = libs.versions.targetSdk.get().toInt()
         // 0.1.83 热修：Media3 LoadControl 的 minBufferMs 必须 >= bufferForPlaybackMs；
         // 0.1.82 的缓冲策略把 min 设成目标的一半，真机播放直接报错（播放失败：minBufferMs...）。
-        versionCode = 84
-        versionName = "0.1.83"
+        versionCode = formalVersionCode
+        versionName = formalVersionName
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }
         // 正式版固定 Media3；ffmpegTest 构建类型覆盖为 true
         buildConfigField("boolean", "USE_NATIVE_ENGINE", "false")
+        // 应用内更新读哪个仓库的 update.json（ffmpegTest 覆盖为测试版仓库）
+        buildConfigField("String", "UPDATE_REPO", "\"mediagate\"")
     }
 
     signingConfigs {
@@ -74,15 +87,16 @@ android {
         create("ffmpegTest") {
             initWith(getByName("release"))
             applicationIdSuffix = ".ffmpeg"
-            // 诊断版（测试图案/看门狗）单独标号，避免和普通测试包混淆
-            versionNameSuffix = "-ffmpeg-d9"
+            // 版本号在 androidComponents 里按变体覆盖（BuildType 上没有 versionCode）
             // 测试包先不混淆，native 的 JNI 按名字找方法更容易排查
             isMinifyEnabled = false
             isShrinkResources = false
             // 这个构建类型只存在于 :app；依赖模块只有 debug/release 变体
             matchingFallbacks += listOf("release", "debug")
             buildConfigField("boolean", "USE_NATIVE_ENGINE", "true")
-            resValue("string", "app_name", "MediaGate FFmpeg D9")
+            // 测试版有自己的更新仓库：清单/资产/版本线都与正式版分开
+            buildConfigField("String", "UPDATE_REPO", "\"mediagate-ffmpeg\"")
+            resValue("string", "app_name", "MediaGate FFmpeg")
             if (keystorePropsFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -119,6 +133,17 @@ android {
     lint {
         abortOnError = false
         checkReleaseBuilds = false
+    }
+}
+
+// BuildType 上没有 versionCode/versionName——版本号只能在变体 API 上覆盖。
+// 这样 ffmpegTest 有自己的一条版本线，和正式版互不影响（更新清单也各读各的仓库）。
+androidComponents {
+    onVariants(selector().withBuildType("ffmpegTest")) { variant ->
+        variant.outputs.forEach { output ->
+            output.versionCode.set(ffmpegVersionCode)
+            output.versionName.set(ffmpegVersionName)
+        }
     }
 }
 

@@ -9,6 +9,7 @@ keystore.properties
 models/
 build/
 .gradle/
+.kotlin/
 .idea/
 *.iml
 captures/

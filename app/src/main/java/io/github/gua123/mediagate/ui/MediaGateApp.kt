@@ -718,6 +718,8 @@ private fun SettingsRoute(
             environment = container.updateEnvironment,
             checker = UpdateChecker(container.updateTransport),
             downloader = FileDownloader(container.updateTransport),
+            // 更新源按构建类型分流：正式版读 mediagate，ffmpegTest 读 mediagate-ffmpeg
+            source = container.updateSource,
         )
     }
     val updateState by updateViewModel.state.collectAsStateWithLifecycle()

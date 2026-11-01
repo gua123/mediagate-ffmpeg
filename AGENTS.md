@@ -2,6 +2,7 @@
 
 > Android 多协议媒体播放器（本地 / WebDAV / SFTP / FTP），小米澎湃 OS，自用 sideload。
 > **本工作区只负责自研 FFmpeg 播放引擎测试版**；正式版 `mediagate` 只保留 Media3。
+> **仓库与更新源：`github.com/gua123/mediagate-ffmpeg`（公开，2026-11-02 起；应用内更新读本仓库）**。
 > **计划权威：`docs/plan.md`**。
 
 ## 1. 硬约束与红线
@@ -15,6 +16,9 @@
   （`192.168.1.x` / `dav.example.com` / `203.0.113.10` / `demo` / 8080·2222·8443）；
   历史上已做全量脱敏并重写（`git filter-branch` + 清 `refs/original` + gc）。
   **替换对照表只存在本工作区记忆库**（不在仓库里），提交前按它自查一遍。发版走 `scripts/publish-update.sh`。
+- **测试版仓库已公开（2026-11-02 起，用户要求「我需要在应用内更新」）**：`github.com/gua123/mediagate-ffmpeg` 是公开仓库，
+  应用内更新读**本仓库**的 `update.json` + Release 资产（正式版仍读 `gua123/mediagate`）；两条版本线互不共享，
+  测试版从 `0.1.84-ffmpeg / 85` 起单独推进（`app/build.gradle.kts` 的 `ffmpegVersionCode/Name`）。
 - **发版纪律（2026-10-03 用户要求）**：「发新版时，如果新版本和旧版本区别不大，就不要发布新版本了，等待下一次新版本一起发布」——
   单个小修复 / 文案调整 / 内部重构**不发版**：改动照常进代码、跑测试、提交，说明写进下一版草稿
   （`docs/release-notes-<下一版>.md`），攒到"新功能 or 用户能明显感知的修复 or 用户点名要的东西"再一起发；
@@ -53,6 +57,8 @@
     # 音转字幕（whisper）已于 0.1.41 整条移除，下面这个脚本不再需要，仅作历史保留
     bash scripts/build-whisper-android.sh      # 【已废弃】重建 ASR native 库（不进 git）
     ./gradlew :app:assembleDebug               # 构建
+    ./gradlew :app:assembleFfmpegTest          # 自研 FFmpeg 测试版（与正式版同源、只差引擎）
+    bash scripts/publish-update.sh             # 发测试版更新：构建 → Release → update.json → 推送
     adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## 5. 当前进度
@@ -456,3 +462,8 @@
   ③ 加**第一帧看门狗**：10 秒没出帧就归约为错误卡片，带上 native 状态（帧数/解码器/音频/Surface），不再让用户对着黑屏猜。
   ④ 已构建测试包 `0.1.83-ffmpeg`（包名 `io.github.gua123.mediagate.ffmpeg`，95.5MB，sha256 以构建日志为准）并与正式版 0.1.83（Media3，24MB）并存验证过；
   **待用户真机验证出画/声音/seek**，通过后再把 B/5 缓存等加进两边同源代码。
+- **独立仓库与更新通道（2026-11-02，用户要求「这个也需要改成公开，我需要在应用内更新，同时版本号要单独更新，不需要与老版本共享」）**：
+  ① 仓库 `gua123/mediagate-ffmpeg` 转公开；应用内更新读**本仓库**的 `update.json`（raw 两条缓存键 + jsDelivr 镜像）与 Release 资产；
+  ② `ffmpegTest` 有了**独立版本线**：`ffmpegVersionCode/Name`（首版 0.1.84-ffmpeg / 85），经 Variant API 覆盖，正式版仍是 0.1.83/84；
+  ③ 更新源由 `BuildConfig.UPDATE_REPO` 分流（`UpdateSource.forRepo`），发布走重写的 `scripts/publish-update.sh`
+  （构建 ffmpegTest → 建 Release → 传 APK → 写 update.json → 推送）。
