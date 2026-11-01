@@ -467,3 +467,8 @@
   ② `ffmpegTest` 有了**独立版本线**：`ffmpegVersionCode/Name`（首版 0.1.84-ffmpeg / 85），经 Variant API 覆盖，正式版仍是 0.1.83/84；
   ③ 更新源由 `BuildConfig.UPDATE_REPO` 分流（`UpdateSource.forRepo`），发布走重写的 `scripts/publish-update.sh`
   （构建 ffmpegTest → 建 Release → 传 APK → 写 update.json → 推送）。
+  ④ **首版已发布**：`v0.1.84-ffmpeg`（versionCode 85，APK 95,503,267 字节，
+  sha256 `63e2884e46d1a63c49db3533cb17bbecd44c3d2543f91eda5e8d5da4cb79d6e9`），tag 指向源码提交 `07bc783`；
+  raw 两条清单 + jsDelivr 均 200，资产 Range 206、大小与 sha256 逐字一致。
+  ⚠️ 0.1.83-ffmpeg-d9（84）及更早的测试包更新源仍指向正式版仓库，需**手动安装一次**本包，之后才能在 App 内检查更新。
+  全量单测 **1257 例 0 失败**（1 例 opt-in 基准跳过；`--rerun-tasks --no-build-cache`）。
