@@ -1,7 +1,8 @@
-# mediagate — 项目工作空间约定
+# mediagate-ffmpeg — 自研 FFmpeg 测试版工作空间
 
 > Android 多协议媒体播放器（本地 / WebDAV / SFTP / FTP），小米澎湃 OS，自用 sideload。
-> **计划权威：`docs/plan.md`**（方案工作区 /root/project/project-plan/mediagate.md 已冻结为只读存档，后续一切变更改这里）。
+> **本工作区只负责自研 FFmpeg 播放引擎测试版**；正式版 `mediagate` 只保留 Media3。
+> **计划权威：`docs/plan.md`**。
 
 ## 1. 硬约束与红线
 
