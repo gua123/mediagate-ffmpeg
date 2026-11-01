@@ -270,8 +270,10 @@
   ② 新增源码级护栏 `StartupPropertyOrderTest`（禁「带类型标注的属性初始化器里读 `.value`」；已实证旧源码报 `AppContainer.kt:662`、修复后通过）。
   **用户真机确认："打开了"**（交付包已用 aapt2 核对 versionCode 29 / 0.1.28 与新文案）。
   当前版本 **0.1.28 / versionCode 29**，包名 `io.github.gua123.mediagate`（0.1.22–0.1.27 为坏版本，可被直接覆盖安装）。
-- **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
-  非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
+- **本机到 GitHub 的通道（2026-11-02 更新）**：系统代理写在 `/etc/profile`（`http://192.168.40.10:10810`；
+  旧文档里的 192.168.1.2 是过时值），非登录 shell 的 `env` 里看不到，所以直连经常超时。
+  **git 已全局配 `http.proxy` / `https.proxy`（用户要求「以后 git 相关的都走这个代理」）**，push/pull/ls-remote 不必再手动带；
+  curl 仍需 `-x http://192.168.40.10:10810`（raw.githubusercontent.com 直连也不通）。`api.github.com` 可直连。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
 - **下一步：真机验收**（本机无 adb 设备）。需真机验证清单与已知限制见 `docs/验收记录-M2-M8.md` 第 4、5 节；
   验收记录共三份：M0 / M1 / M2-M8。
