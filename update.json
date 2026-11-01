@@ -1,8 +1,8 @@
 {
-  "versionCode": 84,
-  "versionName": "0.1.83",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.83/mediagate-0.1.83.apk",
-  "sizeBytes": 24116186,
-  "sha256": "47677758db689dbc79d2a58508ea056d6b34d9f7e0b93b2db2d3e18736a83dd2",
-  "notes": "# 0.1.83 热修发布说明\n\n> 0.1.82 真机播放报错：`播放失败，请重试` / `错误详情：minBufferMs cannot be less than bufferForPlaybackMs`。\n> 这是播放核心不可用，按发版纪律立刻修、立刻发。\n\n## 根因\n\n`PlaybackBufferPolicy.loadControl()` 把 Media3 的四个缓冲参数配成：\n\n- `minBufferMs` = 目标秒数的一半；\n- `bufferForPlaybackMs` = 目标秒数本身。\n\nMedia3 的 `DefaultLoadControl.Builder.build()` 要求 **minBufferMs ≥ bufferForPlaybackMs**，\n否则直接抛 `IllegalArgumentException`，播放页只看到一句英文错误。这段参数是 0.1.77 引入可调缓冲时写的，\n旧单测只测了\"秒数夹值\"，**没有真正 build 一次 LoadControl**，所以一直没红。\n\n## 修复\n\n- `minBufferMs` 改为等于目标秒数（起播/卡顿恢复都等目标秒数）；\n- `maxBufferMs` 仍取目标 8 倍并夹在 60–300 秒；\n- 新增回归：**每个缓冲档位都真的构造一次 `DefaultLoadControl`**，旧写法会在这里直接抛异常；\n- 清理测试里的无效 `@OptIn` 警告。\n\n## 验证\n\n- 全量 **1382 通过 + 1 个 opt-in 基准跳过，0 失败**；\n- 0.1.83 / versionCode 84；\n- 与 0.1.82 相比只动缓冲策略与对应测试，其他缓存/解码逻辑不变。\n\n## 更新\n\n应用内更新，或直接安装：\nhttps://github.com/gua123/mediagate/releases/download/v0.1.83/mediagate-0.1.83.apk"
+  "versionCode": 85,
+  "versionName": "0.1.84-ffmpeg",
+  "apkUrl": "https://github.com/gua123/mediagate-ffmpeg/releases/download/v0.1.84-ffmpeg/mediagate-0.1.84-ffmpeg.apk",
+  "sizeBytes": 95503267,
+  "sha256": "63e2884e46d1a63c49db3533cb17bbecd44c3d2543f91eda5e8d5da4cb79d6e9",
+  "notes": "# 0.1.84-ffmpeg（versionCode 85）\n\n自研 FFmpeg 测试版从这一版起**独立发布**——源码仓库、更新清单、Release 资产与版本号都不再和正式版共用。\n\n## 这次改了什么\n\n- **独立仓库**：https://github.com/gua123/mediagate-ffmpeg （公开；App 匿名读清单与资产，不需要 token）。\n- **应用内更新分流**：ffmpegTest 读本仓库的 update.json（raw 两条缓存键 + jsDelivr 镜像）与本仓库 Release 资产；\n  正式版仍读 gua123/mediagate，两边互不干扰。\n- **独立版本线**：本构建的 versionCode / versionName 单独维护（从 0.1.84-ffmpeg / 85 起），\n  发测试版不再等正式版，正式版的版本号也不会被测试版占用。\n- 设置页「应用更新」里的「打开发布页」也指向本仓库 Releases。\n\n## 升级方式（重要）\n\n0.1.83-ffmpeg-d9（versionCode 84）及更早的测试包，更新源还指向正式版仓库，\n**需要手动安装一次本包**；装好之后就能在 App 内直接检查更新。\n\n- 直接下载：本 Release 的 APK 资产（mediagate-0.1.84-ffmpeg.apk）\n- 包名：`io.github.gua123.mediagate.ffmpeg`（可与正式版共存）\n- versionCode 85 > 84，可覆盖安装，数据不丢\n\n## 功能\n\n与 0.1.83-ffmpeg-d9 相同：自研 FFmpeg 播放引擎（surface 尺寸修复、首帧看门狗）、\n网络加载与缓存策略等与正式版同源。"
 }
