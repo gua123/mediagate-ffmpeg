@@ -476,4 +476,6 @@
   全量单测 **1257 例 0 失败**（1 例 opt-in 基准跳过；`--rerun-tasks --no-build-cache`）。
 - **公网转圈收敛（2026-11-03，0.1.85-ffmpeg / 86）**：公网真机「连接测试正常但播放/列目录都转、70KB/s」⇒ 定位到「打开文件夹自动预热」占满带宽与 SFTP 通道（前 12 个视频×12MB、任务挂应用级作用域、通道池 4 条）。
   改：新增纯函数 `NetworkPrefetchPolicy`——公网关掉整目录预热、预读压到 1 段、打开文件只预取起播点+尾段且顺序发、滑窗 1 段 1 并发、公网不预热下一集、落点预取 1 并发；`SegmentedCacheBackend` 的 readAheadSegments 在公网传 1。
-  单测 `NetworkPrefetchPolicyTest` 6 例；待真机验证（若仍转，下一步查主会话/通道与 native attach）。
+  单测 `NetworkPrefetchPolicyTest` 6 例；全量 **1263 例 0 失败**（1 例 opt-in 基准跳过）。
+  ✅ **已发布**：`v0.1.85-ffmpeg`（86，APK 95,503,262 字节，sha256 `c28934b7…`），tag 指向源码提交 `49d6adc`；raw 清单 + jsDelivr + Range 206 + 资产 digest 复核通过。0.1.83-ffmpeg-d9（84）需手动安装一次；0.1.84 起可在应用内更新。
+  待真机验证：公网进目录/播放是否明显恢复；若仍转，下一步查主会话/通道与 native attach。
