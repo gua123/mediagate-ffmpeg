@@ -227,6 +227,7 @@ void NativePlayer::threadLoop() {
     int64_t audioDropUntilMs = -1;  // 同上（音频）
     int64_t nextAudioUs = 0;        // 下一块音频在媒体时间轴上的位置
     bool audioAnchorSet = false;
+    int audioOutRate = kAudioSampleRate;  // 实际输出采样率（打开音频设备后才知道，可能 != 48000）
 
     double wallClockMs = 0;         // 本"播放段"累计走过的真实时间
     int64_t wallBaseMediaMs = 0;    // 这段真实时间对应的媒体位置
@@ -350,7 +351,7 @@ void NativePlayer::threadLoop() {
                 continue;
             }
             offset += written;
-            nextAudioUs += static_cast<int64_t>(written) * 1000000 / kAudioSampleRate;
+            nextAudioUs += static_cast<int64_t>(written) * 1000000 / (audioOutRate > 0 ? audioOutRate : kAudioSampleRate);
             if (!audioStarted && audio_.queuedFrames() >= kAudioPrefillFrames) {
                 audio_.start();
                 audioStarted = true;
@@ -525,28 +526,34 @@ void NativePlayer::threadLoop() {
                 audioIndex = -1;
             } else {
                 audioTimeBase = format->streams[audioIndex]->time_base;
-                AVChannelLayout outLayout = AV_CHANNEL_LAYOUT_STEREO;
-                AVChannelLayout inLayout;
-                if (audioCtx->ch_layout.nb_channels > 0) {
-                    av_channel_layout_copy(&inLayout, &audioCtx->ch_layout);
-                } else {
-                    av_channel_layout_default(&inLayout, 2);
-                }
-                const int swrRet = swr_alloc_set_opts2(&swr, &outLayout, AV_SAMPLE_FMT_FLT,
-                                                       kAudioSampleRate, &inLayout, audioCtx->sample_fmt,
-                                                       audioCtx->sample_rate, 0, nullptr);
-                av_channel_layout_uninit(&inLayout);
-                if (swrRet < 0 || swr == nullptr || swr_init(swr) < 0) {
-                    if (swr != nullptr) swr_free(&swr);
-                    swr = nullptr;
-                } else {
-                    std::string audioError;
-                    if (audio_.open(kAudioSampleRate, kAudioChannels, &audioError)) {
-                        audioReady = true;
+                // 2026-11-03 真机「声音也变慢了」：AAudio 实际采样率可能不是请求的 48000
+                //（共享模式/设备混音器给 44100 等）。之前重采样固定 48k、设备却按实际率播，
+                // 声音会变慢变调，音频时钟也跟着慢，画面被拖成"慢放"。
+                // 现在先开音频输出，按它返回的实际率重采样，并同步 nextAudioUs 的步长。
+                std::string audioError;
+                if (audio_.open(kAudioSampleRate, kAudioChannels, &audioError)) {
+                    audioOutRate = audio_.sampleRate() > 0 ? audio_.sampleRate() : kAudioSampleRate;
+                    AVChannelLayout outLayout = AV_CHANNEL_LAYOUT_STEREO;
+                    AVChannelLayout inLayout;
+                    if (audioCtx->ch_layout.nb_channels > 0) {
+                        av_channel_layout_copy(&inLayout, &audioCtx->ch_layout);
                     } else {
-                        std::lock_guard<std::mutex> lock(mutex_);
-                        audioError_ = audioError;
+                        av_channel_layout_default(&inLayout, 2);
                     }
+                    const int swrRet = swr_alloc_set_opts2(&swr, &outLayout, AV_SAMPLE_FMT_FLT,
+                                                           audioOutRate, &inLayout, audioCtx->sample_fmt,
+                                                           audioCtx->sample_rate, 0, nullptr);
+                    av_channel_layout_uninit(&inLayout);
+                    if (swrRet < 0 || swr == nullptr || swr_init(swr) < 0) {
+                        if (swr != nullptr) swr_free(&swr);
+                        swr = nullptr;
+                        audio_.close();
+                    } else {
+                        audioReady = true;
+                    }
+                } else {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    audioError_ = audioError;
                 }
             }
         }
