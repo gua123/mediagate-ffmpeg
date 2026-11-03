@@ -481,3 +481,4 @@
   待真机验证：公网进目录/播放是否明显恢复；若仍转，下一步查主会话/通道与 native attach。
 - **网络现场误判修复（2026-11-03，0.1.86-ffmpeg / 87）**：真机截图「连接页显示当前没有网络（未知网络）」但 5G+VPN 正常、同一张卡连通性测试 908ms 正常 ⇒ 根因 `AndroidNetworkMonitor` 用 `registerNetworkCallback(INTERNET)` + `onLost → refresh(null)`：任意被跟踪网络丢失就把全局改成离线（新默认网络就绪后不会再发 onAvailable）⇒ 选路 OFFLINE 拦死。
   修：改 `registerDefaultNetworkCallback` + 回调一律重读 `activeNetwork`；现场不变不推新值；`online` 只认 INTERNET（不再强制 VALIDATED，VPN/无外网局域网常拿不到）；MainActivity.onResume 与「设为当前连接」前各刷新一次自愈。
+  ✅ **已发布**：`v0.1.86-ffmpeg`（87，APK 95,503,267 字节，sha256 `9dc494d2…`），tag 指向源码提交 `69b454d`；raw 清单 + jsDelivr + Range 206 + 资产 digest 复核通过；全量 **1263 例 0 失败**（1 例 opt-in 基准跳过）。
