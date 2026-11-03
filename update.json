@@ -1,8 +1,8 @@
 {
-  "versionCode": 87,
-  "versionName": "0.1.86-ffmpeg",
-  "apkUrl": "https://github.com/gua123/mediagate-ffmpeg/releases/download/v0.1.86-ffmpeg/mediagate-0.1.86-ffmpeg.apk",
-  "sizeBytes": 95503267,
-  "sha256": "9dc494d2281aebc4a358386fbc16ad77030386c976a94f901b9ac8ed4db14cce",
-  "notes": "# 0.1.86-ffmpeg（versionCode 87）\n\n修复「明明有网，App 却说没有网络」的问题。\n\n## 现象\n\n2026-11-03 真机截图：连接页两张卡都显示「当前没有网络，无法连接（未知网络）」，\n但状态栏是 5G + VPN，同一张卡上的连通性测试却刚刚显示「正常（握手 834 ms）」；\n点「设为当前连接」直接被拒——「连接『111 副本』当前没有可用地址：当前没有网络（未知网络）」。\n\n## 根因\n\n`AndroidNetworkMonitor` 之前用 `registerNetworkCallback(INTERNET)` 跟踪**所有**带上网能力的网络，\n并在 `onLost` 里直接把全局现场写成「未知 + 离线」。任意一条被跟踪的网络消失（例如刚切走的 Wi-Fi、\n断开的 VPN、来电期间的网络重注册）都会触发它；而新的默认网络早已就绪、不会再发一次 `onAvailable`，\n于是现场永远停在「离线」，选路直接判 OFFLINE，连接被拦死。\n\n## 修法\n\n- 改用 `registerDefaultNetworkCallback`，只跟踪**默认网络**；\n- 每个回调都**重新读 `manager.activeNetwork` 的现场**，不再相信回调参数；\n- 现场没变不推新值（避免「刷新→重算→再刷新」循环）；\n- `online` 不再强制要求 VALIDATED——VPN / 没外网的局域网常拿不到该标记，误判离线会拦死本来能连的 NAS；\n  真正的可用性交给协议探测；\n- 回前台（MainActivity.onResume）与「设为当前连接」前各主动刷新一次，作为丢事件时的自愈。\n\n## 升级\n\n应用内更新（0.1.84 起）或直接安装本 Release 的 APK。另外本版同样包含 0.1.85 的「公网预热收敛」。\n\n装好后验证：\n1. 状态栏有 5G/VPN 时，连接页不再显示「当前没有网络（未知网络）」；\n2. 点「设为当前连接」不再被拦，浏览/播放能正常开始；\n3. 公网进目录与播放是否比之前明显恢复。"
+  "versionCode": 88,
+  "versionName": "0.1.87-ffmpeg",
+  "apkUrl": "https://github.com/gua123/mediagate-ffmpeg/releases/download/v0.1.87-ffmpeg/mediagate-0.1.87-ffmpeg.apk",
+  "sizeBytes": 95503257,
+  "sha256": "4408e8c06e6bacb22552ef31686ae59e8147301c2dcb91324db62a3f57adba9a",
+  "notes": "# 0.1.87-ffmpeg（versionCode 88）\n\n修「内网播放也卡、像慢放」：自研 FFmpeg 引擎的**送屏路径太重**，不是网络问题。\n\n## 定位\n\n2026-11-03 用户反馈：内网播放同样很卡，感觉和播放引擎有关。查引擎代码发现每帧送屏要做三件重活：\n\n1. `sws_scale` 把解码帧转成 RGBA（bilinear）；\n2. `blitRgba` 里**逐像素**做 RGBA→BGRA 通道交换（1080p 每帧约 200 万次带分支的读改写）；\n3. 每帧先把**整屏**清成黑色（又一个 200 万次的循环）。\n\n软件解码 + 两次百万级逐像素循环叠在一起，中低端机/高分辨率视频很容易压不到 30fps；而 Media3 走硬件解码 + Surface 直出，所以同样的内网它不卡。\n\n## 改动\n\n- 缩放器直接输出 **BGRA**（与 Surface 内存字节序一致），送屏改成**按行 memcpy**，去掉逐像素交换；\n- 清屏从逐像素循环改成 `std::fill_n`（编译器可向量化）；\n- 缩放算法从 `SWS_BILINEAR` 改为 `SWS_FAST_BILINEAR`（画质差别肉眼基本看不出，省 CPU）。\n\n这是纯引擎侧优化，网络/缓存策略不变；本版同时包含 0.1.86 的网络现场误判修复与 0.1.85 的公网预热收敛。\n\n## 验证\n\n装好后播同一批内网/公网视频，重点看：\n\n1. 是否还像慢放/卡顿；\n2. 设置 → 诊断与日志里的最近播放指标：**丢帧**是否还快速上涨、**音画偏差**多大；\n3. 如果仍然卡，请把诊断卡的「画面 编码 宽x高」那行一起发我——**如果是 4K/HEVC，软件解码本身就跑不动，下一步要上 MediaCodec 硬件解码**。"
 }
