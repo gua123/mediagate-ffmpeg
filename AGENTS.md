@@ -484,3 +484,4 @@
   ✅ **已发布**：`v0.1.86-ffmpeg`（87，APK 95,503,267 字节，sha256 `9dc494d2…`），tag 指向源码提交 `69b454d`；raw 清单 + jsDelivr + Range 206 + 资产 digest 复核通过；全量 **1263 例 0 失败**（1 例 opt-in 基准跳过）。
 - **自研引擎送屏优化（2026-11-03，0.1.87-ffmpeg / 88）**：用户「内网播放也卡、像慢放」⇒ 定位到 native 送屏路径每帧做两百万级逐像素循环（RGBA→BGRA 通道交换 + 整屏清屏），叠加软件解码后压不到 30fps。
   改：sws 直接输出 BGRA + 按行 memcpy、清屏改 `std::fill_n`、缩放改 `SWS_FAST_BILINEAR`。待真机验证；若仍卡且视频是 4K/HEVC，下一步上 MediaCodec 硬件解码。
+  ✅ **已发布**：`v0.1.87-ffmpeg`（88，APK 95,503,257 字节，sha256 `4408e8c0…`），tag 指向源码提交 `ff970e8`；raw 清单 + jsDelivr + Range 206 + 资产 digest 复核通过；全量 **1263 例 0 失败**（1 例 opt-in 基准跳过）。
