@@ -1,8 +1,8 @@
 {
-  "versionCode": 88,
-  "versionName": "0.1.87-ffmpeg",
-  "apkUrl": "https://github.com/gua123/mediagate-ffmpeg/releases/download/v0.1.87-ffmpeg/mediagate-0.1.87-ffmpeg.apk",
-  "sizeBytes": 95503257,
-  "sha256": "4408e8c06e6bacb22552ef31686ae59e8147301c2dcb91324db62a3f57adba9a",
-  "notes": "# 0.1.87-ffmpeg（versionCode 88）\n\n修「内网播放也卡、像慢放」：自研 FFmpeg 引擎的**送屏路径太重**，不是网络问题。\n\n## 定位\n\n2026-11-03 用户反馈：内网播放同样很卡，感觉和播放引擎有关。查引擎代码发现每帧送屏要做三件重活：\n\n1. `sws_scale` 把解码帧转成 RGBA（bilinear）；\n2. `blitRgba` 里**逐像素**做 RGBA→BGRA 通道交换（1080p 每帧约 200 万次带分支的读改写）；\n3. 每帧先把**整屏**清成黑色（又一个 200 万次的循环）。\n\n软件解码 + 两次百万级逐像素循环叠在一起，中低端机/高分辨率视频很容易压不到 30fps；而 Media3 走硬件解码 + Surface 直出，所以同样的内网它不卡。\n\n## 改动\n\n- 缩放器直接输出 **BGRA**（与 Surface 内存字节序一致），送屏改成**按行 memcpy**，去掉逐像素交换；\n- 清屏从逐像素循环改成 `std::fill_n`（编译器可向量化）；\n- 缩放算法从 `SWS_BILINEAR` 改为 `SWS_FAST_BILINEAR`（画质差别肉眼基本看不出，省 CPU）。\n\n这是纯引擎侧优化，网络/缓存策略不变；本版同时包含 0.1.86 的网络现场误判修复与 0.1.85 的公网预热收敛。\n\n## 验证\n\n装好后播同一批内网/公网视频，重点看：\n\n1. 是否还像慢放/卡顿；\n2. 设置 → 诊断与日志里的最近播放指标：**丢帧**是否还快速上涨、**音画偏差**多大；\n3. 如果仍然卡，请把诊断卡的「画面 编码 宽x高」那行一起发我——**如果是 4K/HEVC，软件解码本身就跑不动，下一步要上 MediaCodec 硬件解码**。"
+  "versionCode": 89,
+  "versionName": "0.1.88-ffmpeg",
+  "apkUrl": "https://github.com/gua123/mediagate-ffmpeg/releases/download/v0.1.88-ffmpeg/mediagate-0.1.88-ffmpeg.apk",
+  "sizeBytes": 95503253,
+  "sha256": "8b53ccd75219b7c5ca235ed232b2c29dbfaaf93944f1d1d1f4fb5b8d52f1edbe",
+  "notes": "# 0.1.88-ffmpeg（versionCode 89）\n\n修「声音也跟着变慢」：音频输出采样率与重采样率不一致。\n\n## 现象\n\n2026-11-03 用户反馈：公网/内网、甚至**本地视频**播放都像慢放，而且**声音也变慢了**（变慢变调）。\n\n## 根因\n\n自研引擎里音频重采样固定按 **48000 Hz** 生成 PCM，但 AAudio 共享模式给的实际采样率可能不是 48000（例如 44100）：\n\n- 设备按 44100 帧/秒消费 48k 的数据 ⇒ 声音慢约 8.8%、音调变低；\n- 音频时钟按实际率走，媒体时间却按 48k 生成 ⇒ 音画同步判断被带偏，画面跟着被拖成\"慢放\"。\n\n## 改动\n\n打开音频设备后先读实际采样率，再按它建重采样器（`swr` 输出率 = 实际率），`nextAudioUs` 的步长也改用实际率；音频时钟本来就用实际率，三者终于一致。另含 0.1.87 的送屏优化（BGRA 直出 + 行 memcpy + fill_n）。\n\n## 验证\n\n装好后播同一个本地视频：\n\n1. 声音是否恢复常速、音调正常；\n2. 画面是否还像慢放；\n3. 设置 → 诊断与日志的「最近播放指标」：丢帧/音频欠载/音画偏差；「音频 ... Hz」会显示设备实际采样率（44100 还是 48000）。"
 }
