@@ -5,7 +5,6 @@ import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,22 +46,24 @@ class AndroidNetworkMonitor(context: Context) {
             AppLog.w(TAG, "没有 ConnectivityManager，网络现场保持「未知」")
             return
         }
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
         val networkCallback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = refresh(manager, network)
+            // 2026-11-03 真机：一律回到「当前默认网络」重新读现场，不信回调参数。
+            // 旧实现用 registerNetworkCallback(INTERNET) + onLost(null)：任意一条被跟踪网络
+            // （例如刚切走的 Wi-Fi、断开的 VPN）onLost 就把全局改写成「未知/离线」，
+            // 而新默认网络早已就绪、不会再发 onAvailable ⇒ 界面误报「当前没有网络（未知网络）」，
+            // 选路直接 OFFLINE、连接被拦死（真机截图复现）。
+            override fun onAvailable(network: Network) = refresh(manager)
 
-            override fun onLost(network: Network) = refresh(manager, null)
+            override fun onLost(network: Network) = refresh(manager)
 
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = refresh(manager, network)
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = refresh(manager)
 
-            override fun onLinkPropertiesChanged(network: Network, props: LinkProperties) = refresh(manager, network)
+            override fun onLinkPropertiesChanged(network: Network, props: LinkProperties) = refresh(manager)
         }
         callback = networkCallback
-        runCatching { manager.registerNetworkCallback(request, networkCallback) }
-            .onFailure { AppLog.w(TAG, "注册网络回调失败", it) }
-        refresh(manager, manager.activeNetwork)
+        runCatching { manager.registerDefaultNetworkCallback(networkCallback) }
+            .onFailure { AppLog.w(TAG, "注册默认网络回调失败", it) }
+        refresh(manager)
     }
 
     /** 停止监听（幂等）。 */
@@ -73,37 +74,45 @@ class AndroidNetworkMonitor(context: Context) {
         runCatching { manager.unregisterNetworkCallback(current) }
     }
 
-    /** 主动刷新一次（例如从设置页返回时）。 */
+    /** 主动刷新一次（回前台 / 选连接前自愈用）。 */
     fun refreshNow() {
         val manager = connectivity ?: return
-        refresh(manager, manager.activeNetwork)
+        refresh(manager)
     }
 
-    private fun refresh(manager: ConnectivityManager, network: Network?) {
+    /**
+     * 重新读 activeNetwork 的现场；现场没变就不推新值。
+     *
+     * 不推新值很重要：NetworkContext 变化会触发选路/重建后端，如果每次回调都 +revision，
+     * 上层自愈调用（回前台、选连接前）就可能造成「刷新→重算→再刷新」的循环。
+     */
+    private fun refresh(manager: ConnectivityManager) {
         val previous = _context.value
-        if (network == null) {
-            _context.value = previous.copy(
+        val network = manager.activeNetwork
+        val next = if (network == null) {
+            NetworkContext(
                 capability = NetworkCapability.UNKNOWN,
                 ssid = null,
                 localSubnets = emptySet(),
                 online = false,
-                revision = previous.revision + 1,
+                revision = previous.revision,
             )
-            return
+        } else {
+            val caps = runCatching { manager.getNetworkCapabilities(network) }.getOrNull()
+            val props = runCatching { manager.getLinkProperties(network) }.getOrNull()
+            val capability = capabilityOf(caps)
+            NetworkContext(
+                capability = capability,
+                ssid = if (capability == NetworkCapability.WIFI) currentSsid() else null,
+                localSubnets = subnetsOf(props),
+                // 2026-11-03：不再要求 VALIDATED——VPN / 无外网的局域网常拿不到 VALIDATED，
+                // 误判离线会把「其实能连 NAS」的情况直接拦死；真正的可用性交给协议探测。
+                online = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
+                revision = previous.revision,
+            )
         }
-        val caps = runCatching { manager.getNetworkCapabilities(network) }.getOrNull()
-        val props = runCatching { manager.getLinkProperties(network) }.getOrNull()
-        val capability = capabilityOf(caps)
-        val online = caps != null &&
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-        _context.value = NetworkContext(
-            capability = capability,
-            ssid = if (capability == NetworkCapability.WIFI) currentSsid() else null,
-            localSubnets = subnetsOf(props),
-            online = online,
-            revision = previous.revision + 1,
-        )
+        if (next == previous) return
+        _context.value = next.copy(revision = previous.revision + 1)
     }
 
     /** 传输类型：以太网 > Wi-Fi > 蜂窝 > VPN（同时在线的组合里取"真实承载"）。 */

@@ -41,6 +41,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 2026-11-03：来电/切网后 NetworkCallback 可能丢事件，回前台主动刷新一次网络现场
+        (application as MediaGateApplication).container.refreshNetworkContext()
+    }
+
     /**
      * 用户按 Home / 上滑回桌面（**R13**：播放中自动进 PIP 的兜底路径）。
      *

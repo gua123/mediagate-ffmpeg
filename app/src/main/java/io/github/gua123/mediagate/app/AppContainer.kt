@@ -203,6 +203,17 @@ class AppContainer(context: Context) :
     /** 当前网络现场（R7：网络能力是判定顺序的第一环）。 */
     val networkContext: StateFlow<NetworkContext> get() = networkMonitor.context
 
+    /**
+     * 主动刷新网络现场（**2026-11-03 真机**：来电/切网后系统回调可能丢事件，
+     * 界面会误报「当前没有网络（未知网络）」，选路直接 OFFLINE 把连接拦死）。
+     *
+     * 只在现场真的变化时才推新值（见 [AndroidNetworkMonitor.refreshNow]），
+     * 所以回前台、选连接前调用都不会造成「刷新→重算→再刷新」的循环。
+     */
+    fun refreshNetworkContext() {
+        runCatching { networkMonitor.refreshNow() }
+    }
+
     /** 当前连接 id（R8）；null = 用首页选择的本地根目录。 */
     private val currentConnectionId: StateFlow<Long?> =
         connectionSettings.currentId.stateIn(ioScope, SharingStarted.Eagerly, null)
@@ -290,6 +301,9 @@ class AppContainer(context: Context) :
         override val currentConnectionId: StateFlow<Long?> get() = this@AppContainer.currentConnectionId
 
         override suspend fun setCurrentConnection(id: Long?) {
+            // 2026-11-03：选连接前先自愈一次网络现场——否则回调丢事件时，
+            // 这里会直接被 AddressSelector 判 OFFLINE，提示「当前没有网络（未知网络）」。
+            networkMonitor.refreshNow()
             connectionSettings.setCurrent(id)
         }
 
