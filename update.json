@@ -1,8 +1,8 @@
 {
-  "versionCode": 85,
-  "versionName": "0.1.84-ffmpeg",
-  "apkUrl": "https://github.com/gua123/mediagate-ffmpeg/releases/download/v0.1.84-ffmpeg/mediagate-0.1.84-ffmpeg.apk",
-  "sizeBytes": 95503267,
-  "sha256": "63e2884e46d1a63c49db3533cb17bbecd44c3d2543f91eda5e8d5da4cb79d6e9",
-  "notes": "# 0.1.84-ffmpeg（versionCode 85）\n\n自研 FFmpeg 测试版从这一版起**独立发布**——源码仓库、更新清单、Release 资产与版本号都不再和正式版共用。\n\n## 这次改了什么\n\n- **独立仓库**：https://github.com/gua123/mediagate-ffmpeg （公开；App 匿名读清单与资产，不需要 token）。\n- **应用内更新分流**：ffmpegTest 读本仓库的 update.json（raw 两条缓存键 + jsDelivr 镜像）与本仓库 Release 资产；\n  正式版仍读 gua123/mediagate，两边互不干扰。\n- **独立版本线**：本构建的 versionCode / versionName 单独维护（从 0.1.84-ffmpeg / 85 起），\n  发测试版不再等正式版，正式版的版本号也不会被测试版占用。\n- 设置页「应用更新」里的「打开发布页」也指向本仓库 Releases。\n\n## 升级方式（重要）\n\n0.1.83-ffmpeg-d9（versionCode 84）及更早的测试包，更新源还指向正式版仓库，\n**需要手动安装一次本包**；装好之后就能在 App 内直接检查更新。\n\n- 直接下载：本 Release 的 APK 资产（mediagate-0.1.84-ffmpeg.apk）\n- 包名：`io.github.gua123.mediagate.ffmpeg`（可与正式版共存）\n- versionCode 85 > 84，可覆盖安装，数据不丢\n\n## 功能\n\n与 0.1.83-ffmpeg-d9 相同：自研 FFmpeg 播放引擎（surface 尺寸修复、首帧看门狗）、\n网络加载与缓存策略等与正式版同源。"
+  "versionCode": 86,
+  "versionName": "0.1.85-ffmpeg",
+  "apkUrl": "https://github.com/gua123/mediagate-ffmpeg/releases/download/v0.1.85-ffmpeg/mediagate-0.1.85-ffmpeg.apk",
+  "sizeBytes": 95503262,
+  "sha256": "c28934b7c242456362c878d63657e6f80aaf88d230d88d3cd0e3c71d2d6e75b1",
+  "notes": "# 0.1.85-ffmpeg（versionCode 86）\n\n公网「一直转圈」的收敛版：这次不改播放引擎，改的是**App 自己在后台抢占带宽和 SFTP 通道**的行为。\n\n## 定位\n\n2026-11-03 公网真机：连接测试正常（独立探针会话，DNS 0ms / TCP 1ms / 握手 1103ms），\n但打开未缓存视频一直转圈、下载只有 ~70 KB/s；退回目录再点上一级也还在转。\n\n原因是「打开文件夹自动预热」：每进一个目录，会对前 12 个视频各抓「头 2 段 + 尾 1 段」＝12 MB，\n2 个文件并发；这些预取任务挂在应用级作用域（退出播放也不会停），而 SFTP 通道池只有 4 条——\n公网慢链路下，预热会把带宽和通道一直占着，播放和列目录只能排队。\n\n## 改动（公网自动收敛，局域网保持原策略）\n\n- 公网**不再做「打开文件夹自动预热」**（只预热你真正打开的那个文件）；\n- 公网预读从 4 段压到 **1 段**；\n- 打开文件时的预取只留「起播点 + 尾段（moov）」，并且**顺序发**，不再一次并发占满通道；\n- 滑窗预取公网 **1 段 / 1 并发**；\n- 公网**不预热下一集**；\n- 拖拽落点预取公网 **1 并发**。\n\n以上策略收在纯函数 NetworkPrefetchPolicy（6 条单测钉住）；局域网行为不变。\n\n## 升级\n\n应用内更新，或直接安装本 Release 的 APK。装好后请重点验证：\n1. 公网进目录是否秒开（不再长时间转圈）；\n2. 打开未缓存视频的首帧等待是否明显变短；\n3. 如果仍然转，把「设置 → 诊断与日志」里的网络统计/面包屑发我。"
 }
