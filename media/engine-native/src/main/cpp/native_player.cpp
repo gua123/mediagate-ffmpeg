@@ -418,8 +418,11 @@ void NativePlayer::threadLoop() {
         // 画面尺寸变了（转屏、进小窗）要重建缩放器，否则会按老尺寸缩放、比例变形
         if (sws == nullptr || swsSrcW != srcW || swsSrcH != srcH || swsDstW != dstW || swsDstH != dstH) {
             if (sws != nullptr) sws_freeContext(sws);
+            // 2026-11-03 真机「内网也卡」：送屏路径原来逐像素做 RGBA 通道交换 + 全屏清屏，
+            // 1080p 每帧就是两百万次带分支的读改写。改成直接产 BGRA（与 Surface 内存字节序一致）
+            // + 行 memcpy；缩放器用 fast bilinear（画质差别肉眼基本看不出，省 CPU 更值）。
             sws = sws_getContext(srcW, srcH, static_cast<AVPixelFormat>(videoFrame->format), dstW, dstH,
-                                 AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+                                 AV_PIX_FMT_BGRA, SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
             swsSrcW = srcW;
             swsSrcH = srcH;
             swsDstW = dstW;
