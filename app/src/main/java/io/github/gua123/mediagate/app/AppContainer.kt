@@ -36,6 +36,7 @@ import io.github.gua123.mediagate.core.crypto.KeystoreCredentialCipher
 import io.github.gua123.mediagate.core.database.MediaGateDatabase
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import io.github.gua123.mediagate.core.network.AddressFallbackProbe
+import io.github.gua123.mediagate.core.network.AddressLabel
 import io.github.gua123.mediagate.core.network.AddressSelector
 import io.github.gua123.mediagate.core.network.AndroidNetworkMonitor
 import io.github.gua123.mediagate.core.network.NetworkContext
@@ -254,14 +255,24 @@ class AppContainer(context: Context) :
     fun warmUpForOpen(path: String, positionMs: Long = 0L, durationMs: Long = 0L) {
         val cache = remoteCache ?: return
         val segment = networkTuning.tuning.value.segmentBytes
+        val onWan = remoteOnWan
+        val parallel = NetworkPrefetchPolicy.openPrefetchParallel(onWan)
         ioScope.launch {
             runCatching {
                 val size = cache.knownSizeOf(path)
-                val chunks = PrefetchTargets.openPlan(size, segment, positionMs, durationMs)
+                val chunks = NetworkPrefetchPolicy.openChunks(onWan, size, segment, positionMs, durationMs)
                 if (chunks.isEmpty()) return@runCatching
-                AppLog.i(TAG, "点按预取 " + chunks.size + " 段：" + path)
-                chunks.forEach { chunk ->
-                    launch {
+                AppLog.i(TAG, "点按预取 " + chunks.size + " 段" + (if (onWan) "（公网顺序）" else "") + "：" + path)
+                if (parallel) {
+                    chunks.forEach { chunk ->
+                        launch {
+                            runCatching { cache.prefetch(path, chunk.offset, chunk.length) }
+                                .onFailure { AppLog.w(TAG, "点按预取失败（不影响播放）：" + path, it) }
+                        }
+                    }
+                } else {
+                    // 公网：顺序预取，避免同时占满 4 条 SFTP 通道（播放/列目录要留通道）
+                    chunks.forEach { chunk ->
                         runCatching { cache.prefetch(path, chunk.offset, chunk.length) }
                             .onFailure { AppLog.w(TAG, "点按预取失败（不影响播放）：" + path, it) }
                     }
@@ -307,6 +318,10 @@ class AppContainer(context: Context) :
 
     /** 远端后端的构造指纹：选路结果、根路径、账号、密码有无变化时才重建。 */
     private var remoteSignature: String? = null
+
+    /** 当前远端地址是不是公网（WAN）：公网/弱网下收敛后台预热（2026-11-03 公网转圈）。 */
+    @Volatile
+    private var remoteOnWan: Boolean = false
 
     private val _remoteNotice = MutableStateFlow<String?>(null)
 
@@ -468,6 +483,8 @@ class AppContainer(context: Context) :
      */
     override suspend fun warmUpFile(path: String) {
         val cache = remoteCache ?: return
+        // 公网不做整目录预热（2026-11-03）：前 12 个视频 ×12MB 会在 70KB/s 链路上堵十几分钟
+        if (!NetworkPrefetchPolicy.folderWarmUpEnabled(remoteOnWan)) return
         val segment = networkTuning.tuning.value.segmentBytes
         val headBytes = segment * PREFETCH_HEAD_SEGMENTS
         runCatching {
@@ -944,17 +961,19 @@ class AppContainer(context: Context) :
          */
         override suspend fun prefetchSeek(path: String, positionMs: Long, durationMs: Long) {
             val cache = videoBackend.value as? SegmentedCacheBackend ?: return
+            // 公网只发 1 个请求：落点预取要和播放/列目录共用 4 条 SFTP 通道（2026-11-03）
+            val concurrency = NetworkPrefetchPolicy.seekPrefetchConcurrency(remoteOnWan)
             tsIndexPreparer.indexOf(path)?.let { index ->
                 val offset = index.seekTarget(positionMs)
                 if (offset >= 0L) {
-                    cache.prefetchParallel(path, offset, PREFETCH_BYTES, concurrency = 2)
+                    cache.prefetchParallel(path, offset, PREFETCH_BYTES, concurrency = concurrency)
                     return
                 }
             }
             val size = runCatching { cache.knownSizeOf(path) }.getOrNull() ?: return
             // 没有索引时的兜底换算由纯函数负责（参数不可用 ⇒ null ⇒ 不动，宁可不动也不瞎猜）
             val offset = PrefetchTargets.offsetForPosition(positionMs, durationMs, size) ?: return
-            cache.prefetchParallel(path, offset, PREFETCH_BYTES, concurrency = 2)
+            cache.prefetchParallel(path, offset, PREFETCH_BYTES, concurrency = concurrency)
         }
 
             /** 播放页每次打开文件后上报一行指标（起播 / seek 等待 / 丢帧 / 欠载 / 音画偏差）。 */
@@ -1014,11 +1033,13 @@ class AppContainer(context: Context) :
             val seeked = lastObservedPositionMs > 0L &&
                 (positionMs < lastObservedPositionMs || positionMs - lastObservedPositionMs > 30_000L)
             lastObservedPositionMs = positionMs
-            val cap = networkTuning.tuning.value.readAheadSegments
+            val onWan = remoteOnWan
+            val cap = NetworkPrefetchPolicy.slidingWindowSegments(onWan, networkTuning.tuning.value.readAheadSegments)
             ioScope.launch {
                 runCatching {
                     val size = cache.knownSizeOf(path)
                     // 2026-10-25：用户设置的预读段数是上限；自适应只能收缩（弱网/刚 seek 时少抓）
+                    // 2026-11-03：公网再压到 1 段——公网大段预取会把链路和通道一直占住
                     val ahead = AdaptiveReadAhead.segments(
                         throughputBytesPerSec = cache.recentThroughputBytesPerSec(),
                         seekedRecently = seeked,
@@ -1038,11 +1059,18 @@ class AppContainer(context: Context) :
                             TAG,
                             "滑窗预取 @" + (positionMs / 1000) + "s：" + path + "（" + ahead + " 段，自适应）",
                         )
-                        // 两个连接并发拉：高延迟链路上把往返藏起来（2026-10-20）
-                        cache.prefetchParallel(path, offset = window.offset, length = window.length, concurrency = 2)
+                        // 高延迟链路并发拉可藏往返；公网降到 1 个请求，给播放与元数据让路（2026-11-03）
+                        cache.prefetchParallel(
+                            path = path,
+                            offset = window.offset,
+                            length = window.length,
+                            concurrency = NetworkPrefetchPolicy.slidingWindowConcurrency(onWan),
+                        )
                     }
                     // 下一集预热（P1.7）：播到 80% 时只抓下一集的头尾——连播切集几乎瞬时
-                    if (PrefetchWindow.shouldWarmNextEpisode(
+                    // 2026-11-03：公网不做（会额外抓下一个文件，和当前播放抢带宽）
+                    if (NetworkPrefetchPolicy.nextEpisodeWarmEnabled(onWan) &&
+                        PrefetchWindow.shouldWarmNextEpisode(
                             positionMs = positionMs,
                             durationMs = durationMs,
                             alreadyWarmed = nextEpisodeWarmedPath == path,
@@ -1244,6 +1272,7 @@ class AppContainer(context: Context) :
         remoteRoot?.let { state ->
             remoteRoot = null
             remoteSignature = null
+            remoteOnWan = false
             _remoteRootLabel.value = null
             runCatching { state.backend.close() }
         }
@@ -1658,6 +1687,8 @@ class AppContainer(context: Context) :
         build: suspend () -> StorageBackend,
     ) {
         if (remoteSignature == signature && remoteRoot != null) return
+        // 公网/弱网收敛：本次连接用的是 WAN 地址时，后台预热要降级（2026-11-03）
+        val onWan = address.label == AddressLabel.WAN
         val previous = remoteRoot
         val next = runCatching {
             BrowserRootState(
@@ -1695,8 +1726,9 @@ class AppContainer(context: Context) :
                         // 段大小与缓存总上限在构造时定（改它等于缓存作废，所以"下次连接生效"）…
                         segmentBytes = tuning.segmentBytes,
                         maxBytes = effectiveMax,
-                        // 预读段数每次现读 ⇒ 设置里一改就生效（段大小只能下次连接生效）
-                        readAheadSegments = tuning.readAheadSegments,
+                        // 预读段数每次现读 ⇒ 设置里一改就生效（段大小只能下次连接生效）；
+                        // 公网压到 1 段：否则每读完一段又预读 4 段，等于把链路一直占满（2026-11-03）
+                        readAheadSegments = NetworkPrefetchPolicy.readAheadSegments(onWan, tuning.readAheadSegments),
                         // **按"连接"而不是"地址"分缓存**（2026-10-03 用户提问「局域网留了缓存，
                         // 切公网还要重新缓存吗？」）：同一连接下的局域网/公网地址共用同一份段缓存，
                         // 在家缓存过的部分，出门走公网直接复用。
@@ -1712,6 +1744,7 @@ class AppContainer(context: Context) :
         remoteRoot = next
         currentRemoteRecord = if (next == null) null else record
         remoteSignature = if (next == null) null else signature
+        remoteOnWan = next != null && onWan
         _remoteRootLabel.value = next?.label
         if (previous?.backend !== next?.backend) runCatching { previous?.backend?.close() }
         if (next != null) _remoteNotice.value = null
@@ -1844,6 +1877,7 @@ class AppContainer(context: Context) :
         remoteRoot = null
         currentRemoteRecord = null
         remoteSignature = null
+        remoteOnWan = false
         _remoteRootLabel.value = null
         runCatching { previous.backend.close() }
         publishRoot()

@@ -474,3 +474,6 @@
   raw 两条清单 + jsDelivr 均 200，资产 Range 206、大小与 sha256 逐字一致。
   ⚠️ 0.1.83-ffmpeg-d9（84）及更早的测试包更新源仍指向正式版仓库，需**手动安装一次**本包，之后才能在 App 内检查更新。
   全量单测 **1257 例 0 失败**（1 例 opt-in 基准跳过；`--rerun-tasks --no-build-cache`）。
+- **公网转圈收敛（2026-11-03，0.1.85-ffmpeg / 86）**：公网真机「连接测试正常但播放/列目录都转、70KB/s」⇒ 定位到「打开文件夹自动预热」占满带宽与 SFTP 通道（前 12 个视频×12MB、任务挂应用级作用域、通道池 4 条）。
+  改：新增纯函数 `NetworkPrefetchPolicy`——公网关掉整目录预热、预读压到 1 段、打开文件只预取起播点+尾段且顺序发、滑窗 1 段 1 并发、公网不预热下一集、落点预取 1 并发；`SegmentedCacheBackend` 的 readAheadSegments 在公网传 1。
+  单测 `NetworkPrefetchPolicyTest` 6 例；待真机验证（若仍转，下一步查主会话/通道与 native attach）。

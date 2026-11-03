@@ -14,8 +14,8 @@ val formalVersionName = "0.1.83"
 // 自研 FFmpeg 测试版：**独立版本线**，只在本仓库（gua123/mediagate-ffmpeg）推进。
 // 起始 85 是为了能覆盖安装手机上的 0.1.83-ffmpeg-d9（versionCode 84）；此后与正式版无关。
 // 更新清单见仓库根 update.json（scripts/publish-update.sh 发布时写入）。
-val ffmpegVersionCode = 85
-val ffmpegVersionName = "0.1.84-ffmpeg"
+val ffmpegVersionCode = 86
+val ffmpegVersionName = "0.1.85-ffmpeg"
 
 // 源码级护栏读的**非编译输入**必须声明成 Test 输入（2026-10-15 真机事故后补）：
 // 清单少一个会话 action 时，SessionServiceDeclarationTest 本该报红，但 Gradle 因为"清单不是测试输入"
