@@ -1,8 +1,8 @@
 {
-  "versionCode": 90,
-  "versionName": "0.1.89-ffmpeg",
-  "apkUrl": "https://github.com/gua123/mediagate-ffmpeg/releases/download/v0.1.89-ffmpeg/mediagate-0.1.89-ffmpeg.apk",
-  "sizeBytes": 95503258,
-  "sha256": "37c174a7b0057bc8e43870a68f1659f0fb5c96ec231e61a0a0dd92e074783688",
-  "notes": "# 0.1.89-ffmpeg（versionCode 90）\n\n自研 FFmpeg 引擎加入 **MediaCodec 硬解**（H.264 / HEVC / MPEG-4 / MPEG-2 / VP8 / VP9 / AV1）。\n\n## 怎么做的\n\n- 本项目 FFmpeg 构建本来就带 --enable-jni --enable-mediacodec；这次把解码器从默认软解改成按编码找 h264_mediacodec / hevc_mediacodec 等；\n- JNI_OnLoad 把 JavaVM 交给 FFmpeg；Kotlin 的 android.view.Surface 以全局引用存下来；\n- 播放入口先试硬解，失败（没有 Surface / 设备不支持 / 编码不匹配）自动回退软解，不会因为硬解不可用而播不了；\n- 硬解帧是 AV_PIX_FMT_MEDIACODEC，直接 release 到 Surface，不再走 sws_scale + 逐行拷贝；丢帧/seek 时显式 release(0)，避免输出缓冲占满卡死；\n- 诊断卡「画面 …」会显示实际解码器名：h264_mediacodec / hevc_mediacodec = 硬解，h264 / hevc = 软解。\n\n## 已知点\n\n- 首版硬解直接输出到 Surface，画面比例可能被拉伸（软解路径的 FIT 黑边不会生效）；先看性能，比例/缩放下一版再补。\n- 硬解初始化失败会回退软解；如果硬解初始化成功但运行中不出帧，第一帧看门狗仍会报错，请把诊断卡发我。\n\n## 验证\n\n播一个之前卡的 4K / H.265 视频，看：\n\n1. 是否还像慢放；\n2. 诊断卡「画面」后的解码器名是不是 *_mediacodec；\n3. 丢帧/音频欠载/音画偏差是否明显下降。\n\n本版同时包含 0.1.87 送屏优化与 0.1.88 音频实际采样率修复。"
+  "versionCode": 91,
+  "versionName": "0.1.90-ffmpeg",
+  "apkUrl": "https://github.com/gua123/mediagate-ffmpeg/releases/download/v0.1.90-ffmpeg/mediagate-0.1.90-ffmpeg.apk",
+  "sizeBytes": 95503262,
+  "sha256": "c6565180c44c772284f711aa1e700c96b519d27b78775c5b33a09d9af1b5c9ac",
+  "notes": "# 0.1.90-ffmpeg（versionCode 91）\n\n修 0.1.89 硬解首帧失败（真机截图：h264_mediacodec 1080x1920，0 帧上屏、丢 26 帧、音频欠载 263 次）。\n\n## 根因与改动\n\n1. **续播/初始 seek 在打开硬解之后才做**：MediaCodec 已经打开，再 avcodec_flush_buffers 容易让输出缓冲停在旧 serial，帧一直不出来。\n   现在检测到有待执行的 seek 时，先 av_seek_frame 再打开解码器，并同步时钟/音频 epoch。\n2. **硬解帧在解码线程里等主时钟**：MediaCodec 输出缓冲有限，等待会把解码和音频一起饿死（欠载 263 次就是这么来的）。\n   现在硬解不再阻塞等待，改为按帧 PTS 算好上屏时间，交给 av_mediacodec_render_buffer_at_time 调度，随即释放缓冲；解码线程继续喂音频。\n3. **首帧超时自动回退**：如果硬解 10 秒仍没有上屏帧，自动把硬解开关关掉并提示“已切回软解，点重试继续”；重试走软解，不再一直黑屏。\n\n## 验证\n\n播之前出问题的那个 1080x1920 视频（尤其是续播到 36 秒的场景），看：\n\n1. 是否正常出画、不报 10 秒无第一帧；\n2. 诊断卡解码器名：h264_mediacodec / hevc_mediacodec = 硬解；h264 / hevc = 软解；\n3. 如果又出现“已自动切回软解”，说明硬解在这台机器/这个文件上仍有问题，请把诊断卡发我（此时已能正常观看）。\n\n首版已知：硬解直接输出 Surface，画面比例可能拉伸；比例/缩放下一版补。"
 }
