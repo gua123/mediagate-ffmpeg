@@ -78,7 +78,14 @@ constexpr int64_t kEofDrainMs = 3000;
 /** 环形缓冲满了两片之间的间隔（等设备取走）。 */
 constexpr auto kAudioFullPoll = std::chrono::milliseconds(2);
 
+/** 硬解总开关：初始化失败/首帧超时时由 Kotlin 侧关掉，下一次播放走软解。 */
+std::atomic<bool> gHardwareDecodeEnabled{true};
+
 }  // namespace
+
+void setHardwareDecodeEnabled(bool enabled) {
+    gHardwareDecodeEnabled.store(enabled, std::memory_order_relaxed);
+}
 
 /**
  * 由 JNI 层提供（见 engine_jni.cpp）。
@@ -137,21 +144,31 @@ bool NativePlayer::openSource(JNIEnv* env, jobject source, std::string* error) {
     return true;
 }
 
-void NativePlayer::play() {
+void NativePlayer::play(int64_t startMs) {
     // 两条打开路径：open() 用 path_，openSource() 用 JNI 数据源（path_ 为空）。
     // 旧检查只看 path_，导致"走我们数据层"的本地/远端文件 play() 直接 return，
     // 线程永远不启动：看门狗报 10 秒无第一帧，状态却是空闲 0 秒/0 帧。
     if (!shouldStartPlayback(!path_.empty(), source_.valid())) return;
     if (running_.load()) {
-        // 已经在跑：只是从暂停恢复
+        // 已经在跑：只是从暂停恢复；带 startMs 时就当作一次 seek
         paused_.store(false);
         state_.store(static_cast<int>(PlayerState::PLAYING));
+        if (startMs >= 0) {
+            seekTargetMs_.store(startMs);
+            hasSeek_.store(true);
+        }
         return;
     }
     paused_.store(false);
     hasSeek_.store(false);
     droppedFrames_.store(0);
     avOffsetMs_.store(0);
+    if (startMs >= 0) {
+        // 线程在打开解码器前先消费这个 seek（见 threadLoop 的 initialSeekMs），
+        // 避免 MediaCodec 打开后再 flush 打死输出缓冲。
+        seekTargetMs_.store(startMs);
+        hasSeek_.store(true);
+    }
     running_.store(true);
     state_.store(static_cast<int>(PlayerState::PLAYING));
     worker_ = std::thread([this] { threadLoop(); });
@@ -416,6 +433,44 @@ void NativePlayer::threadLoop() {
             videoDropUntilMs = -1;
         }
 
+        // 硬解帧不在解码线程里等时钟：MediaCodec 的输出缓冲有限，等待会把解码/音频一起饿死。
+        // 直接按帧 PTS 算"该在什么时候上屏"，交给 MediaCodec 调度（render_buffer_at_time），随后立即释放。
+        if (useMediaCodec) {
+            if (videoFrame->format == AV_PIX_FMT_MEDIACODEC && videoFrame->data[3] != nullptr) {
+                if (!running_.load() || paused_.load() || hasSeek_.load()) {
+                    discardHardwareFrame();
+                    return;
+                }
+                const double clock = masterClockMs();
+                if (static_cast<double>(normMs) < clock - static_cast<double>(kSyncDropThresholdMs)) {
+                    discardHardwareFrame();
+                    droppedFrames_.fetch_add(1);
+                    return;
+                }
+                const int64_t nowUs = av_gettime_relative();
+                const int64_t deltaUs =
+                    static_cast<int64_t>((static_cast<double>(normMs) - clock) * 1000.0);
+                const int64_t nowNs = nowUs * 1000;
+                int64_t renderNs = nowNs + deltaUs * 1000;
+                if (renderNs < nowNs) renderNs = nowNs;
+                auto* buffer = reinterpret_cast<AVMediaCodecBuffer*>(videoFrame->data[3]);
+                av_mediacodec_render_buffer_at_time(buffer, renderNs);
+                frames_.fetch_add(1);
+                avOffsetMs_.store(static_cast<int64_t>(static_cast<double>(normMs) - clock));
+                if (!firstFrameRecorded) {
+                    firstFrameRecorded = true;
+                    firstFrameMs_.store((nowUs - loopStartUs) / 1000);
+                }
+                if (seekPending) {
+                    seekPending = false;
+                    lastSeekMs_.store((nowUs - seekRequestUs) / 1000);
+                }
+            } else {
+                discardHardwareFrame();
+            }
+            return;
+        }
+
         // 等主时钟走到这一帧：早了就睡（切片），迟到太多就丢
         double lastClock = -1.0;
         int stalledSlices = 0;
@@ -441,26 +496,6 @@ void NativePlayer::threadLoop() {
         }
         if (!running_.load() || paused_.load() || hasSeek_.load()) {  // 期间被打断：这帧不要了
             discardHardwareFrame();
-            return;
-        }
-
-        if (useMediaCodec) {
-            if (videoFrame->format == AV_PIX_FMT_MEDIACODEC && videoFrame->data[3] != nullptr) {
-                auto* buffer = reinterpret_cast<AVMediaCodecBuffer*>(videoFrame->data[3]);
-                // 慢一帧的送屏时机在上面已经等过；这里 release(render=1) 直接让 MediaCodec 送上屏。
-                av_mediacodec_release_buffer(buffer, 1);
-                frames_.fetch_add(1);
-                avOffsetMs_.store(static_cast<int64_t>(normMs - masterClockMs()));
-                const int64_t nowUs = av_gettime_relative();
-                if (!firstFrameRecorded) {
-                    firstFrameRecorded = true;
-                    firstFrameMs_.store((nowUs - loopStartUs) / 1000);
-                }
-                if (seekPending) {
-                    seekPending = false;
-                    lastSeekMs_.store((nowUs - seekRequestUs) / 1000);
-                }
-            }
             return;
         }
 
@@ -513,6 +548,7 @@ void NativePlayer::threadLoop() {
 
     // ---------------------------------------------------------------- 打开
     bool ready = false;
+    int64_t initialSeekMs = -1;  // 续播/初始 seek：在打开解码器之前先定位，避免硬解打开后再 flush
     const bool fromSource = source_.valid();
     std::string path;
     {
@@ -557,6 +593,17 @@ void NativePlayer::threadLoop() {
             break;
         }
 
+        // 2026-11-07 真机硬解首帧失败：续播时先 seek 再打开解码器。
+        // 之前是打开 MediaCodec 后再 avcodec_flush_buffers，输出缓冲可能停在旧 serial，
+        // 结果 0 帧上屏、丢帧 26、音频欠载 263（截图实证）。
+        if (hasSeek_.exchange(false)) {
+            const int64_t target = seekTargetMs_.load();
+            if (target > 0 &&
+                av_seek_frame(format, -1, target * 1000, AVSEEK_FLAG_BACKWARD) >= 0) {
+                initialSeekMs = target;
+            }
+        }
+
         const AVCodec* videoDecoder = nullptr;
         videoIndex = av_find_best_stream(format, AVMEDIA_TYPE_VIDEO, -1, -1, &videoDecoder, 0);
         if (videoIndex < 0 || videoDecoder == nullptr) {
@@ -569,7 +616,7 @@ void NativePlayer::threadLoop() {
         // 2026-11-05 硬解：优先 h264_mediacodec/hevc_mediacodec 等，失败自动回退软解。
         // 需要 Kotlin 侧先绑好 android.view.Surface，并且 JNI_OnLoad 已把 JVM 交给 FFmpeg。
         jobject mcSurface = javaSurface();
-        if (mcSurface != nullptr) {
+        if (gHardwareDecodeEnabled.load(std::memory_order_relaxed) && mcSurface != nullptr) {
             const char* hwName = mediaCodecDecoderName(videoPar->codec_id);
             const AVCodec* hwDecoder = hwName == nullptr ? nullptr : avcodec_find_decoder_by_name(hwName);
             if (hwDecoder != nullptr) {
@@ -688,6 +735,19 @@ void NativePlayer::threadLoop() {
         }
         ready = true;
     } while (false);
+
+    if (ready && initialSeekMs >= 0) {
+        positionMs_.store(initialSeekMs);
+        wallBaseMediaMs = initialSeekMs;
+        wallClockMs = 0;
+        lastTickUs = 0;
+        videoDropUntilMs = initialSeekMs;
+        audioDropUntilMs = initialSeekMs;
+        nextAudioUs = initialSeekMs * 1000;
+        audioAnchorSet = false;
+        seekPending = false;
+        if (audioReady) audio_.seekEpoch(initialSeekMs);
+    }
 
     // ---------------------------------------------------------------- 播放
     if (ready) {

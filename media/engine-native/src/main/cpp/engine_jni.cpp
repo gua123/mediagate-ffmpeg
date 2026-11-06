@@ -127,6 +127,13 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSetSurface
     surfaceRenderer().setWindow(window);
 }
 
+/** 开关硬解（硬解失败时 Kotlin 侧自动切回软解，下一次播放生效）。 */
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSetHardwareDecode(
+        JNIEnv*, jclass, jboolean enabled) {
+    mediagate::setHardwareDecodeEnabled(enabled != JNI_FALSE);
+}
+
 /**
  * 更新 Surface 缓冲尺寸。
  *
@@ -232,12 +239,12 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlayFile(
  */
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlaySource(
-        JNIEnv* env, jclass, jobject source) {
+        JNIEnv* env, jclass, jobject source, jlong startMs) {
     if (source == nullptr) return toJString(env, "没有可用的数据来源");
     if (!surfaceRenderer().hasWindow()) return toJString(env, "还没有绑定画面（Surface 为空）");
     std::string error;
     if (!nativePlayer().openSource(env, source, &error)) return toJString(env, error);
-    nativePlayer().play();
+    nativePlayer().play(startMs);
     return toJString(env, "");
 }
 

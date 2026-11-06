@@ -129,6 +129,9 @@ class NativeEnginePlayer(
     @Volatile
     private var lastStatus: NativePlayerStatus? = null
 
+    /** 硬解开关（默认开；首帧超时自动关掉，重试走软解）。 */
+    private val nativePrefs = context.getSharedPreferences("mediagate_native_engine", Context.MODE_PRIVATE)
+
     private val surfaceView: SurfaceView by lazy {
         SurfaceView(context).apply {
             holder.addCallback(object : SurfaceHolder.Callback {
@@ -307,8 +310,14 @@ class NativeEnginePlayer(
             return
         }
         val ready = source ?: return
-        val error = NativeEngine.playSource(ready)
+        NativeEngine.setHardwareDecode(nativePrefs.getBoolean("hardware_decode", true))
+        // 续播位置必须在 playSource 之前交给 native：native 会在打开解码器前先 seek，
+        // 避免 MediaCodec 打开后再 flush（0.1.89 首帧失败的真机根因）。
+        val startAt = pendingSeekMs
+        pendingSeekMs = null
+        val error = NativeEngine.playSource(ready, startAt ?: -1L)
         if (error.isNotEmpty()) {
+            if (startAt != null) pendingSeekMs = startAt
             _state.value = EngineState.Error(error)
             return
         }
@@ -380,6 +389,16 @@ class NativeEnginePlayer(
             val status = lastStatus
             if (status?.error != null) return@launch
             if (status != null && status.firstFrameMs > 0L) return@launch
+            // 硬解有输出（可能是被判定迟到丢掉的帧）却一直没上屏：把这台机器的硬解关掉，
+            // 下一次重试自动走软解，避免用户一直对着黑屏。
+            val hardwareUsed = status?.videoCodec?.contains("mediacodec", ignoreCase = true) == true
+            if (hardwareUsed && nativePrefs.getBoolean("hardware_decode", true)) {
+                nativePrefs.edit().putBoolean("hardware_decode", false).apply()
+                _state.value = EngineState.Error(
+                    "FFmpeg 硬解 10 秒没有出第一帧，已自动切回软解；点「重试」继续播放。",
+                )
+                return@launch
+            }
             val detail = status?.describe() ?: NativeEngine.playerStatus()
             _state.value = EngineState.Error(
                 "FFmpeg 引擎 10 秒没有出第一帧（Surface=" + surfaceReady +

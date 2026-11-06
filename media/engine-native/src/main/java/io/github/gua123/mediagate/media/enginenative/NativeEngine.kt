@@ -95,6 +95,20 @@ object NativeEngine {
         }
     }
 
+    /**
+     * 开关 MediaCodec 硬解（下一次打开播放器时生效）。
+     *
+     * 硬解首帧超时后由 [NativeEnginePlayer] 关掉，重试时走软解，避免一直黑屏。
+     */
+    fun setHardwareDecode(enabled: Boolean) {
+        if (!isAvailable) return
+        try {
+            nativeSetHardwareDecode(enabled)
+        } catch (t: Throwable) {
+            AppLog.w(TAG, "切换硬解开关失败", t)
+        }
+    }
+
     /** 当前是否已绑定可画的 Surface。 */
     fun hasSurface(): Boolean = safeBool { nativeHasSurface() }
 
@@ -150,6 +164,8 @@ object NativeEngine {
 
     private external fun nativeSetSurfaceSize(width: Int, height: Int)
 
+    private external fun nativeSetHardwareDecode(enabled: Boolean)
+
     private external fun nativeHasSurface(): Boolean
 
     private external fun nativeDrawTestPattern(frameIndex: Int): Boolean
@@ -201,9 +217,9 @@ object NativeEngine {
      * 需要先 [setSurface]；返回空串表示已开始，否则是中文原因。
      * **数据源由调用方负责关闭**（native 只借用，不接管它的生命周期）。
      */
-    fun playSource(source: NativeMediaSource): String {
+    fun playSource(source: NativeMediaSource, startMs: Long = -1L): String {
         if (!isAvailable) return "自研引擎不可用：${loadFailure ?: "native 库没加载"}"
-        return safe { nativePlaySource(source) } ?: "启动播放失败（native 调用异常，详见日志）"
+        return safe { nativePlaySource(source, startMs) } ?: "启动播放失败（native 调用异常，详见日志）"
     }
 
     /** 暂停（画面停住）。 */
@@ -232,7 +248,7 @@ object NativeEngine {
 
     private external fun nativePlayFile(path: String): String
 
-    private external fun nativePlaySource(source: NativeMediaSource): String
+    private external fun nativePlaySource(source: NativeMediaSource, startMs: Long): String
 
     private external fun nativePausePlayback()
 

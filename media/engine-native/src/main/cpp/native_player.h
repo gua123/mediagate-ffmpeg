@@ -12,6 +12,9 @@
 
 namespace mediagate {
 
+/** 开关 MediaCodec 硬解（硬解失败时 Kotlin 侧可自动切回软解）。 */
+void setHardwareDecodeEnabled(bool enabled);
+
 /** 播放状态（给界面用的一档）。 */
 enum class PlayerState {
     IDLE = 0,
@@ -75,8 +78,8 @@ public:
      */
     bool openSource(JNIEnv* env, jobject source, std::string* error);
 
-    /** 开始（或从暂停继续）播放。 */
-    void play();
+    /** 开始（或从暂停继续）播放；startMs >= 0 表示起播前先定位到该位置（续播）。 */
+    void play(int64_t startMs = -1);
 
     /** 暂停（画面与声音都停住，线程保留现场）。 */
     void pause();
