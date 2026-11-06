@@ -9,20 +9,42 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavcodec/mediacodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/mem.h>
 #include <libavutil/time.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
 
 #include "av_sync.h"
+#include "java_surface.h"
 #include "surface_renderer.h"
 
 namespace mediagate {
 namespace {
 
 constexpr const char* kTag = "mediagate-engine";
+
+/**
+ * 编码 → FFmpeg 的 MediaCodec 硬解解码器名。
+ *
+ * 注意：FFmpeg 的 mediacodec 解码器只认 android/view/Surface 输出，
+ * 拿到的是 AV_PIX_FMT_MEDIACODEC 帧，不能再走 sws_scale；渲染由 MediaCodec 直接送 Surface。
+ */
+const char* mediaCodecDecoderName(AVCodecID codecId) {
+    switch (codecId) {
+        case AV_CODEC_ID_H264: return "h264_mediacodec";
+        case AV_CODEC_ID_HEVC: return "hevc_mediacodec";
+        case AV_CODEC_ID_MPEG4: return "mpeg4_mediacodec";
+        case AV_CODEC_ID_MPEG2VIDEO: return "mpeg2_mediacodec";
+        case AV_CODEC_ID_VP8: return "vp8_mediacodec";
+        case AV_CODEC_ID_VP9: return "vp9_mediacodec";
+        case AV_CODEC_ID_AV1: return "av1_mediacodec";
+        default: return nullptr;
+    }
+}
 
 /** 走数据层时 FFmpeg 的读缓冲大小：一次 64 KB，比逐包小读省 JNI 往返。 */
 constexpr int kAvioBufferBytes = 64 * 1024;
@@ -200,6 +222,7 @@ void NativePlayer::threadLoop() {
     AVFormatContext* format = nullptr;
     AVIOContext* sourceAvio = nullptr;  // 走数据层时的读回调上下文（我们自己建、自己释放）
     AVCodecContext* videoCtx = nullptr;
+    bool useMediaCodec = false;         // 当前视频走 MediaCodec 硬解（帧格式 MEDIACODEC，直接送 Surface）
     AVCodecContext* audioCtx = nullptr;
     AVPacket* packet = nullptr;
     AVFrame* frame = nullptr;
@@ -375,8 +398,21 @@ void NativePlayer::threadLoop() {
         if (ptsMs >= 0) videoTimeline.bindFromFirstFrame(ptsMs);
         const int64_t normMs = ptsMs < 0 ? positionMs_.load() : videoTimeline.normalize(ptsMs);
 
+        // 硬解帧的缓冲区由 MediaCodec 持有：丢帧/早退时必须显式 release(0)，
+        // 否则输出缓冲会被占满，解码器几帧之后就不再出帧（表现成卡死）。
+        auto discardHardwareFrame = [&]() {
+            if (useMediaCodec && videoFrame->format == AV_PIX_FMT_MEDIACODEC &&
+                videoFrame->data[3] != nullptr) {
+                av_mediacodec_release_buffer(
+                    reinterpret_cast<AVMediaCodecBuffer*>(videoFrame->data[3]), 0);
+            }
+        };
+
         if (videoDropUntilMs >= 0) {
-            if (normMs < videoDropUntilMs - kSeekDropSlackMs) return;  // 关键帧回退带出来的旧帧
+            if (normMs < videoDropUntilMs - kSeekDropSlackMs) {  // 关键帧回退带出来的旧帧
+                discardHardwareFrame();
+                return;
+            }
             videoDropUntilMs = -1;
         }
 
@@ -394,6 +430,7 @@ void NativePlayer::threadLoop() {
             const SyncDecision decision =
                 decideVideoSync(normMs, clock, kSyncEarlyToleranceMs, kSyncDropThresholdMs);
             if (decision.drop) {
+                discardHardwareFrame();
                 droppedFrames_.fetch_add(1);
                 return;
             }
@@ -402,7 +439,30 @@ void NativePlayer::threadLoop() {
             std::this_thread::sleep_for(std::chrono::milliseconds(slice));
             tickClock();
         }
-        if (!running_.load() || paused_.load() || hasSeek_.load()) return;  // 期间被打断：这帧不要了
+        if (!running_.load() || paused_.load() || hasSeek_.load()) {  // 期间被打断：这帧不要了
+            discardHardwareFrame();
+            return;
+        }
+
+        if (useMediaCodec) {
+            if (videoFrame->format == AV_PIX_FMT_MEDIACODEC && videoFrame->data[3] != nullptr) {
+                auto* buffer = reinterpret_cast<AVMediaCodecBuffer*>(videoFrame->data[3]);
+                // 慢一帧的送屏时机在上面已经等过；这里 release(render=1) 直接让 MediaCodec 送上屏。
+                av_mediacodec_release_buffer(buffer, 1);
+                frames_.fetch_add(1);
+                avOffsetMs_.store(static_cast<int64_t>(normMs - masterClockMs()));
+                const int64_t nowUs = av_gettime_relative();
+                if (!firstFrameRecorded) {
+                    firstFrameRecorded = true;
+                    firstFrameMs_.store((nowUs - loopStartUs) / 1000);
+                }
+                if (seekPending) {
+                    seekPending = false;
+                    lastSeekMs_.store((nowUs - seekRequestUs) / 1000);
+                }
+            }
+            return;
+        }
 
         const int srcW = videoFrame->width;
         const int srcH = videoFrame->height;
@@ -503,14 +563,53 @@ void NativePlayer::threadLoop() {
             fail("这个文件里没有能解码的视频流");
             break;
         }
-        videoCtx = avcodec_alloc_context3(videoDecoder);
-        if (videoCtx == nullptr ||
-            avcodec_parameters_to_context(videoCtx, format->streams[videoIndex]->codecpar) < 0 ||
-            avcodec_open2(videoCtx, videoDecoder, nullptr) < 0) {
-            fail("解码器打不开（这个编码可能本机不支持）");
-            break;
+        const AVCodecParameters* videoPar = format->streams[videoIndex]->codecpar;
+        const AVCodec* chosenDecoder = videoDecoder;
+
+        // 2026-11-05 硬解：优先 h264_mediacodec/hevc_mediacodec 等，失败自动回退软解。
+        // 需要 Kotlin 侧先绑好 android.view.Surface，并且 JNI_OnLoad 已把 JVM 交给 FFmpeg。
+        jobject mcSurface = javaSurface();
+        if (mcSurface != nullptr) {
+            const char* hwName = mediaCodecDecoderName(videoPar->codec_id);
+            const AVCodec* hwDecoder = hwName == nullptr ? nullptr : avcodec_find_decoder_by_name(hwName);
+            if (hwDecoder != nullptr) {
+                AVCodecContext* hwCtx = avcodec_alloc_context3(hwDecoder);
+                if (hwCtx != nullptr && avcodec_parameters_to_context(hwCtx, videoPar) >= 0) {
+                    hwCtx->thread_count = 1;
+                    hwCtx->pkt_timebase = format->streams[videoIndex]->time_base;
+                    AVMediaCodecContext* mc = av_mediacodec_alloc_context();
+                    bool hwReady = false;
+                    if (mc != nullptr && av_mediacodec_default_init(hwCtx, mc, mcSurface) >= 0) {
+                        if (avcodec_open2(hwCtx, hwDecoder, nullptr) >= 0) {
+                            videoCtx = hwCtx;
+                            chosenDecoder = hwDecoder;
+                            useMediaCodec = true;
+                            hwReady = true;
+                            __android_log_print(ANDROID_LOG_INFO, kTag, "视频硬解：%s", hwDecoder->name);
+                        } else {
+                            av_mediacodec_default_free(hwCtx);
+                        }
+                    } else if (mc != nullptr) {
+                        av_free(mc);
+                    }
+                    if (!hwReady) avcodec_free_context(&hwCtx);
+                } else if (hwCtx != nullptr) {
+                    avcodec_free_context(&hwCtx);
+                }
+            }
         }
-        videoCtx->thread_count = 0;  // 让 FFmpeg 自己决定解码线程数
+        if (!useMediaCodec) {
+            videoCtx = avcodec_alloc_context3(chosenDecoder);
+            if (videoCtx == nullptr ||
+                avcodec_parameters_to_context(videoCtx, videoPar) < 0 ||
+                avcodec_open2(videoCtx, chosenDecoder, nullptr) < 0) {
+                fail("解码器打不开（这个编码可能本机不支持）");
+                break;
+            }
+            videoCtx->thread_count = 0;  // 让 FFmpeg 自己决定解码线程数
+        }
+        videoCtx->pkt_timebase = format->streams[videoIndex]->time_base;
+        videoDecoder = chosenDecoder;
         videoTimeBase = format->streams[videoIndex]->time_base;
 
         const AVCodec* audioDecoder = nullptr;
@@ -724,6 +823,11 @@ void NativePlayer::threadLoop() {
     av_frame_free(&frame);
     av_packet_free(&packet);
     avcodec_free_context(&audioCtx);
+    if (useMediaCodec && videoCtx != nullptr) {
+        // 必须先释放 hwaccel_context（删除我们持有的 Surface 全局引用），再注销 AVCodecContext；
+        // 解码器自己的 surface 引用在 close 时由 mediacodec 模块释放。
+        av_mediacodec_default_free(videoCtx);
+    }
     avcodec_free_context(&videoCtx);
     avformat_close_input(&format);
     // 顺序要紧：format 关掉之后才能还 AVIO（还完 format->pb 就是野指针了）

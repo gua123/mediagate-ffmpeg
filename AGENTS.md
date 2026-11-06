@@ -488,3 +488,4 @@
 - **声音也变慢（2026-11-03，0.1.88-ffmpeg / 89）**：用户报本地播放也卡、**声音也变慢** ⇒ 根因是重采样固定 48000、AAudio 实际率可能是 44100：设备按 44100 消费 48k 数据 ⇒ 声音慢 8.8% 且音调低，音频时钟/媒体时间也被带偏 ⇒ 画面慢放。
   修：先开音频输出读实际率，再按实际率建 swr，`nextAudioUs` 步长同步实际率。待真机验证；诊断卡「音频 ... Hz」可直接看实际率。
   ✅ **已发布**：`v0.1.88-ffmpeg`（89，APK 95,503,253 字节，sha256 `8b53ccd7…`），tag 指向源码提交 `9379683`；raw 清单 + jsDelivr + Range 206 + 资产 digest 复核通过；全量 **1263 例 0 失败**（1 例 opt-in 跳过；首轮 :data:storage-api 的「清空缓存作废段任务」偶发失败，单跑与全量重跑均通过）。
+- **自研引擎硬解（2026-11-05，0.1.89-ffmpeg / 90）**：利用现有 FFmpeg 的 mediacodec（--enable-jni --enable-mediacodec），按编码找 h264_mediacodec/hevc_mediacodec 等，Surface 全局引用 + JNI 交 JVM；硬解帧 AV_PIX_FMT_MEDIACODEC 直接 release 到 Surface，失败自动回退软解；诊断卡显示解码器名。首版已知：直接输出 Surface 可能拉伸比例，下一版补 FIT。

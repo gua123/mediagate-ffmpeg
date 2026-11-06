@@ -1,14 +1,20 @@
 #include <jni.h>
 
+#include <mutex>
 #include <string>
 
 #include <android/native_window_jni.h>
+
+extern "C" {
+#include <libavcodec/jni.h>
+}
 
 #include "avio_source.h"
 #include "engine_core.h"
 #include "surface_renderer.h"
 #include "first_frame.h"
 #include "native_player.h"
+#include "java_surface.h"
 #include "media_probe.h"
 #include "self_check.h"
 #include "subtitle_extract.h"
@@ -45,6 +51,24 @@ mediagate::NativePlayer& nativePlayer() {
 
 namespace mediagate {
 
+namespace {
+std::mutex gJavaSurfaceMutex;
+jobject gJavaSurface = nullptr;
+}  // namespace
+
+void updateJavaSurface(JNIEnv* env, jobject surface) {
+    if (env == nullptr) return;
+    jobject ref = surface == nullptr ? nullptr : env->NewGlobalRef(surface);
+    std::lock_guard<std::mutex> lock(gJavaSurfaceMutex);
+    // 旧引用不 Delete（见头文件说明）：硬解码线程可能仍持有它。
+    gJavaSurface = ref;
+}
+
+jobject javaSurface() {
+    std::lock_guard<std::mutex> lock(gJavaSurfaceMutex);
+    return gJavaSurface;
+}
+
 /** 供 first_frame.cpp 借用（所有权仍在本文件）。 */
 SurfaceRenderer& globalSurfaceRenderer() {
     return surfaceRenderer();
@@ -62,6 +86,9 @@ namespace {
  */
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
     mediagate::setJavaVm(vm);
+    // FFmpeg 的 mediacodec 解码器走 JNI（ff_jni_get_env），必须把 JVM 交给它；
+    // 播放线程由 FFmpeg 自己 Attach，不需要我们逐次传 env。
+    av_jni_set_java_vm(vm, nullptr);
     return JNI_VERSION_1_6;
 }
 
@@ -94,6 +121,7 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeDecodePath
 extern "C" JNIEXPORT void JNICALL
 Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSetSurface(
         JNIEnv* env, jclass, jobject surface) {
+    mediagate::updateJavaSurface(env, surface);
     ANativeWindow* window = surface == nullptr ? nullptr : ANativeWindow_fromSurface(env, surface);
     // ANativeWindow_fromSurface 已经 +1 引用；SurfaceRenderer 负责在换/释放时 -1
     surfaceRenderer().setWindow(window);
