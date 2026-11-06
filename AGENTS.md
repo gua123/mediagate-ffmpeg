@@ -491,3 +491,4 @@
 - **自研引擎硬解（2026-11-05，0.1.89-ffmpeg / 90）**：利用现有 FFmpeg 的 mediacodec（--enable-jni --enable-mediacodec），按编码找 h264_mediacodec/hevc_mediacodec 等，Surface 全局引用 + JNI 交 JVM；硬解帧 AV_PIX_FMT_MEDIACODEC 直接 release 到 Surface，失败自动回退软解；诊断卡显示解码器名。首版已知：直接输出 Surface 可能拉伸比例，下一版补 FIT。
   ✅ **已发布**：`v0.1.89-ffmpeg`（90，APK 95,503,258 字节，sha256 `37c174a7…`），tag 指向源码提交 `97d9ee0`；raw 清单 + jsDelivr + Range 206 + 资产 digest 复核通过；全量 **1263 例 0 失败**（1 例 opt-in 跳过）。待真机验证硬解解码器名与实际出画/比例。
 - **硬解首帧失败热修（2026-11-07，0.1.90-ffmpeg / 91）**：真机截图 h264_mediacodec 1080x1920、0 帧上屏/丢 26 帧/音频欠载 263 次 ⇒ ① 续播 seek 改为**打开硬解前**先 av_seek_frame（避免 MediaCodec 打开后 flush 打死输出缓冲）；② 硬解帧不再在解码线程等时钟，改 av_mediacodec_render_buffer_at_time 调度后立即释放，避免饿死音频；③ 首帧 10 秒超时自动关硬解并提示「已切回软解，点重试」，重试走软解。
+  ✅ **已发布**：`v0.1.90-ffmpeg`（91，APK 95,503,262 字节，sha256 `c6565180…`），tag 指向源码提交 `dec7e14`；raw 清单 + jsDelivr + Range 206 + 资产 digest 复核通过；全量 **1263 例 0 失败**（1 例 opt-in 跳过）。待真机复验 1080x1920 续播场景。
