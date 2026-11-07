@@ -1,8 +1,8 @@
 {
-  "versionCode": 92,
-  "versionName": "0.1.91-ffmpeg",
-  "apkUrl": "https://github.com/gua123/mediagate-ffmpeg/releases/download/v0.1.91-ffmpeg/mediagate-0.1.91-ffmpeg.apk",
-  "sizeBytes": 95503254,
-  "sha256": "630a18a1cf905c2885dbc15a16d163976661816276b4f1c3011df9ef10b76e3d",
-  "notes": "# 0.1.91-ffmpeg（versionCode 92）\n\n真机确认 0.1.90 的“自动切回软解”生效（能看，但硬解仍失败）。这次定位到**续播 seek 的时机**。\n\n## 根因\n\n0.1.90 虽然把“起播位置”通过 play(startMs) 传给 native，但播放页的 applyResume() 仍然在\nprepare()/play() **之后**才调用 seek。而 NativeEnginePlayer 在 prepare 完成后就会起 native 播放线程\n（此时 MediaCodec 已打开）。于是又变成“硬解打开后再 seek + flush”，和前一次一样：0 帧上屏、看门狗超时。\n\n## 改动\n\n1. applyResume() 提前到 setMedia() 之后、prepare()/play() **之前**：NativeEnginePlayer 会把它记成\n   pendingSeek，等 startIfReady 起播时通过 play(startMs) 在打开解码器前 seek。\n2. 面包屑改为打印**实际内核**（created.kind）；请求与实际不一致时写“请求 X”。测试版不会再显示误导的「内核 Media3」。\n3. 硬解开关键换成 hardware_decode_v2：0.1.90 自动回退写入的 false 不会带过来，本版重新默认开硬解。\n\n## 验证\n\n再播同一个 1080x1920 视频（尤其续播到 36 秒）：\n\n1. 日志「开始播放」应显示「内核 自研引擎（请求 Media3）」；\n2. 诊断卡「画面」后应是 h264_mediacodec（硬解）；\n3. 若又出现「已自动切回软解」，把诊断卡发我——说明不是 seek 时机，下一步查 Surface/解码器本身。"
+  "versionCode": 93,
+  "versionName": "0.1.92-ffmpeg",
+  "apkUrl": "https://github.com/gua123/mediagate-ffmpeg/releases/download/v0.1.92-ffmpeg/mediagate-0.1.92-ffmpeg.apk",
+  "sizeBytes": 95503342,
+  "sha256": "16c204f843baf9bd3d51b15018e2251489bdb727464babcd9d7533186a96df04",
+  "notes": "# 0.1.92-ffmpeg（versionCode 93）\n\n真机确认 0.1.91 仍然是软解。这一版先把**硬解失败诊断**做出来，同时修掉上一版自动回退的持久化坑。\n\n## 改动\n\n1. **自动回退只影响当前进程**：不再把硬件解码开关写进 SharedPreferences。以前一次失败会把后续启动也锁在软解；现在杀掉 App 重开就会重新尝试硬解。\n2. **失败信息带诊断**：硬解 10 秒没出第一帧时，错误卡片不再只有一句话，会带上 native 状态（解码器 / 分辨率 / 已显示帧 / 丢帧 / 音频欠载 / 音画偏差），并写一条面包屑。请把这张卡片截图发我。\n3. **送屏失败不再假装成功**：av_mediacodec_render_buffer_at_time 返回失败时计丢帧并释放缓冲；以前会把它算成“已显示”，首帧看门狗因此不触发，只剩黑屏。\n4. **能力提示文案修正**（上一版遗留）：自研引擎底部不再写「暂无倍速与硬解档位」，改为「暂无倍速与手动解码档位（硬解自动优先）」，避免被读成“不支持硬解”。\n\n## 验证\n\n装好后打开同一个 1080x1920 视频（硬解会重新尝试一次）：\n\n- 如果正常出画：看诊断卡「画面」后是不是 h264_mediacodec；\n- 如果又回软解：把错误卡片整张截图给我——这次会带解码器、帧数、丢帧、音频欠载等细节；再不行我会用 Media3 播同一文件做对照，确认是 FFmpeg mediacodec 集成问题还是设备/文件问题。"
 }
