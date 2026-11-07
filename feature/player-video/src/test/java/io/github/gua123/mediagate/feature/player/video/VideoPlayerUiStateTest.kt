@@ -284,7 +284,7 @@ class VideoPlayerUiStateTest {
         val native = VideoPlayerUiState(engineKind = EngineKind.NATIVE)
         assertFalse("倍速芯片不该出现（点了也没用）", native.canChangeSpeed)
         assertFalse("解码档位芯片不该出现", native.canChangeDecoder)
-        assertEquals("自研引擎暂无倍速与硬解档位", native.capsNotice)
+        assertEquals("自研引擎暂无倍速与手动解码档位（硬解自动优先）", native.capsNotice)
     }
 
     @Test

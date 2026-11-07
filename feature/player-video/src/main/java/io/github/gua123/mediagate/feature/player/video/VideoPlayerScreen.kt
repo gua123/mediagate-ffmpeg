@@ -177,7 +177,7 @@ fun VideoPlayerScreen(
     var vlcWarningVisible by remember { mutableStateOf(false) }
     // 启动探针判定"本机跑不了 LibVLC" → 直接不让切，并给「重新测试」出口
     var vlcUnavailableVisible by remember { mutableStateOf(false) }
-    // 切到**自研引擎**之前先说清能力差异（2026-10-15：它还没有倍速与硬解档位）——
+    // 切到**自研引擎**之前先说清能力差异（它不开放倍速与手动解码档位，硬解自动优先）——
     // 口径是"不做静默降级"：宁可多一次确认，也不让用户切过去发现"点了没反应"
     var nativeNoticeVisible by remember { mutableStateOf(false) }
     // 自检没过（独立进程探针）：不让切，并给「重新测试」出口（与 LibVLC 那套一致）
@@ -413,7 +413,7 @@ fun VideoPlayerScreen(
                     onRequestSwitchEngine = {
                         if (state.otherEngine == EngineKind.NATIVE) {
                             // 自研引擎：① 自检没过就**先拦住**（独立进程测出来的，别让用户踩坑）；
-                            // ② 自检过了也要先告知能力差异（还没有倍速/硬解档位），确认后再切。
+                            // ② 自检过了也要先告知能力差异（不开放倍速/手动解码档位，硬解自动优先），确认后再切。
                             if (state.engineUsable == false) nativeUnavailableVisible = true else nativeNoticeVisible = true
                         } else {
                             // 判定收敛在纯函数里（VlcSwitchDecision，有单测）：

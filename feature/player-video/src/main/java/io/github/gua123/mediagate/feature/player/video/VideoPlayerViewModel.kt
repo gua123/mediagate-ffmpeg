@@ -521,7 +521,7 @@ class VideoPlayerViewModel(
      */
     fun setDecoderMode(mode: DecoderMode) {
         if (_state.value.switching) return
-        // 当前内核如实声明"不支持解码档位"（自研引擎只有软解一条路）⇒ 别假装切了
+        // 当前内核如实声明"不支持手动解码档位"（自研引擎自动选硬/软解）⇒ 别假装切了
         if (!_state.value.canChangeDecoder) return
         viewModelScope.launch {
             withContext(io) { runCatching { environment.preferences.setDecoderMode(mode) } }

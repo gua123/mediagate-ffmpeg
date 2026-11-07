@@ -58,11 +58,11 @@ class EngineCatalogTest {
         assertFalse(native.decoderModes)
         // 能力的"缺项"是界面提示文案的来源；这里只钉住判断本身（文案在 feature 层的单测里）
         assertNull("能力齐平时不该有缺项", missingOf(EngineCatalog.capabilitiesOf(EngineKind.MEDIA3)))
-        assertEquals(listOf("倍速", "硬解档位"), missingOf(native))
+        assertEquals(listOf("倍速", "手动解码档位"), missingOf(native))
     }
 
     private fun missingOf(caps: EngineCapabilities): List<String>? = buildList {
         if (!caps.speed) add("倍速")
-        if (!caps.decoderModes) add("硬解档位")
+        if (!caps.decoderModes) add("手动解码档位")
     }.ifEmpty { null }
 }

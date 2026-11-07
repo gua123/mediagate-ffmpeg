@@ -17,7 +17,7 @@
     <string name="video_engine">内核：%1$s</string>
     <string name="video_engine_switch_to">切换到 %1$s 内核</string>
     <string name="video_native_engine_title">试一下自研引擎</string>
-    <string name="video_native_engine_body">自研引擎（自己写的播放内核）目前还没有：倍速、硬解档位。缩放四档、音量、字幕、拖拽都正常；当前倍速不是 1.0× 的话，切过去会回到 1.0×。想换回来，再点一次「内核」按钮轮转即可。</string>
+    <string name="video_native_engine_body">自研引擎（自己写的播放内核）目前不开放：倍速、手动解码档位。硬解自动优先（能硬解就硬解，失败自动回退软解）；缩放四档、音量、字幕、拖拽都正常。当前倍速不是 1.0× 的话，切过去会回到 1.0×。想换回来，再点一次「内核」按钮轮转即可。</string>
     <string name="video_native_engine_confirm">切过去试试</string>
     <string name="video_native_engine_cancel">先不切</string>
     <string name="video_native_unavailable_title">本机跑不了自研引擎</string>

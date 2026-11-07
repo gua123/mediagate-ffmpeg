@@ -231,7 +231,7 @@ data class VideoPlayerUiState(
     /** 倍速档位能不能用（自研引擎还不支持 ⇒ 界面不显示那个芯片）。 */
     val canChangeSpeed: Boolean get() = engineCaps.speed
 
-    /** 解码档位能不能用（自研引擎目前只有软解一条路）。 */
+    /** 解码档位能不能用（自研引擎自动选硬解/软解，不开放手动档位）。 */
     val canChangeDecoder: Boolean get() = engineCaps.decoderModes
 
     /**
@@ -244,9 +244,17 @@ data class VideoPlayerUiState(
         get() {
             val missing = buildList {
                 if (!engineCaps.speed) add("倍速")
-                if (!engineCaps.decoderModes) add("硬解档位")
+                // 2026-11-07：这里原来写「硬解档位」，被用户读成「自研引擎不支持硬解」。
+                // 实际是**不开放手动解码档位**（自动硬解优先），措辞必须如实。
+                if (!engineCaps.decoderModes) add("手动解码档位")
             }
-            return if (missing.isEmpty()) null else engineKind.label + "暂无" + missing.joinToString("与")
+            if (missing.isEmpty()) return null
+            val autoHint = if (engineKind == EngineKind.NATIVE && !engineCaps.decoderModes) {
+                "（硬解自动优先）"
+            } else {
+                ""
+            }
+            return engineKind.label + "暂无" + missing.joinToString("与") + autoHint
         }
 
     /** 解码档位展示名（R10，中文来自 media:engine 的档位定义）。 */
