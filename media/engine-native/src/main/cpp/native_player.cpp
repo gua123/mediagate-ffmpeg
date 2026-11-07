@@ -454,7 +454,13 @@ void NativePlayer::threadLoop() {
                 int64_t renderNs = nowNs + deltaUs * 1000;
                 if (renderNs < nowNs) renderNs = nowNs;
                 auto* buffer = reinterpret_cast<AVMediaCodecBuffer*>(videoFrame->data[3]);
-                av_mediacodec_render_buffer_at_time(buffer, renderNs);
+                // 调度失败（时间戳/Surface 异常）也算丢帧，不能假装成功——否则首帧看门狗
+                // 会以为已经出帧，用户只能看到黑屏、也拿不到降级诊断。
+                if (av_mediacodec_render_buffer_at_time(buffer, renderNs) < 0) {
+                    av_mediacodec_release_buffer(buffer, 0);
+                    droppedFrames_.fetch_add(1);
+                    return;
+                }
                 frames_.fetch_add(1);
                 avOffsetMs_.store(static_cast<int64_t>(static_cast<double>(normMs) - clock));
                 if (!firstFrameRecorded) {

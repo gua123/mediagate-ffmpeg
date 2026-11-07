@@ -495,3 +495,4 @@
 - **续播 seek 时机热修（2026-11-07，0.1.91-ffmpeg / 92）**：真机 0.1.90 自动回退软解，说明硬解仍失败；根因＝播放页 applyResume 在 prepare/play 之后才 seek，而 NativeEnginePlayer 在 prepare 后就起了 native 播放线程（MediaCodec 已打开）⇒ 又变成“打开后再 flush”。
   修：applyResume 提前到 setMedia 之后、prepare 之前（native 记 pendingSeek，起播时 play(startMs) 在开解码器前 seek）；面包屑改打印 created.kind；硬解开关键换 hardware_decode_v2（0.1.90 的 false 不继承）。
   ✅ **已发布**：`v0.1.91-ffmpeg`（92，APK 95,503,254 字节，sha256 `630a18a1…`），tag 指向源码提交 `51da0a0`；raw 清单 + jsDelivr + Range 206 + 资产 digest 复核通过；全量 **1263 例 0 失败**（1 例 opt-in 跳过）。待真机复验续播硬解。
+- **硬解失败诊断版（2026-11-07，0.1.92-ffmpeg / 93）**：真机 0.1.91 仍软解。改：① 自动回退只影响当前进程（不再写 SharedPreferences 永久关闭，杀掉重开重试硬解）；② 首帧超时错误带 native 状态 + 面包屑；③ render_buffer_at_time 失败计丢帧/释放缓冲，不再假装出帧；④ 能力提示改「手动解码档位（硬解自动优先）」。待真机发回带诊断的失败卡片。

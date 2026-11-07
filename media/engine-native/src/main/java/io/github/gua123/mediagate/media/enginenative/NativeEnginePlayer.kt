@@ -5,6 +5,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.Breadcrumbs
 import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.data.storage.api.asRandomAccessSource
@@ -129,13 +130,9 @@ class NativeEnginePlayer(
     @Volatile
     private var lastStatus: NativePlayerStatus? = null
 
-    /**
-     * 硬解开关（默认开；首帧超时自动关掉，重试走软解）。
-     *
-     * 2026-11-07：键名带 v2——0.1.90 自动回退会把旧键写成 false，如果沿用旧键，
-     * 新版本一上来就直接软解、永远测不到硬解。换键 = 新版本重新默认开。
-     */
-    private val nativePrefs = context.getSharedPreferences("mediagate_native_engine", Context.MODE_PRIVATE)
+    // 硬解开关不再写 SharedPreferences：自动回退只影响**当前进程**。
+    // 2026-11-07 的坑：写死 false 后新版本一上来就软解，永远测不到硬解；
+    // 现在杀掉 App 重开就会重新尝试硬解。
 
     private val surfaceView: SurfaceView by lazy {
         SurfaceView(context).apply {
@@ -315,7 +312,7 @@ class NativeEnginePlayer(
             return
         }
         val ready = source ?: return
-        NativeEngine.setHardwareDecode(nativePrefs.getBoolean("hardware_decode_v2", true))
+        NativeEngine.setHardwareDecode(!hardwareDisabledForProcess)
         // 续播位置必须在 playSource 之前交给 native：native 会在打开解码器前先 seek，
         // 避免 MediaCodec 打开后再 flush（0.1.89 首帧失败的真机根因）。
         val startAt = pendingSeekMs
@@ -394,17 +391,18 @@ class NativeEnginePlayer(
             val status = lastStatus
             if (status?.error != null) return@launch
             if (status != null && status.firstFrameMs > 0L) return@launch
-            // 硬解有输出（可能是被判定迟到丢掉的帧）却一直没上屏：把这台机器的硬解关掉，
-            // 下一次重试自动走软解，避免用户一直对着黑屏。
+            val detail = status?.describe() ?: NativeEngine.playerStatus()
+            // 硬解有输出（可能是被判定迟到丢掉的帧）却一直没上屏：本进程内先关掉硬解，
+            // 让重试能走软解；同时把诊断详情写进错误卡片与面包屑，便于定位。
             val hardwareUsed = status?.videoCodec?.contains("mediacodec", ignoreCase = true) == true
-            if (hardwareUsed && nativePrefs.getBoolean("hardware_decode_v2", true)) {
-                nativePrefs.edit().putBoolean("hardware_decode_v2", false).apply()
+            if (hardwareUsed && !hardwareDisabledForProcess) {
+                hardwareDisabledForProcess = true
+                Breadcrumbs.mark("硬解首帧超时：" + detail.replace('\n', ' '))
                 _state.value = EngineState.Error(
-                    "FFmpeg 硬解 10 秒没有出第一帧，已自动切回软解；点「重试」继续播放。",
+                    "FFmpeg 硬解 10 秒没有出第一帧，已自动切回软解；点「重试」继续播放。\n诊断：" + detail,
                 )
                 return@launch
             }
-            val detail = status?.describe() ?: NativeEngine.playerStatus()
             _state.value = EngineState.Error(
                 "FFmpeg 引擎 10 秒没有出第一帧（Surface=" + surfaceReady +
                     "，" + NativeEngine.hasSurface() + "；" + detail + "）",
@@ -429,6 +427,15 @@ class NativeEnginePlayer(
 
     private companion object {
         const val TAG = "NativeEnginePlayer"
+
+        /**
+         * 硬解在本进程内是否已被自动关闭。
+         *
+         * 只影响当前进程：杀掉 App 重开会重新尝试硬解；不再写 SharedPreferences，
+         * 避免一次失败把以后所有版本都永久锁在软解（0.1.90 的坑）。
+         */
+        @Volatile
+        private var hardwareDisabledForProcess = false
 
         /** 状态轮询间隔：够跟上界面（进度条 / 字幕覆盖层另外直接读 positionMs）。 */
         const val POLL_INTERVAL_MS = 250L
