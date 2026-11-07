@@ -494,3 +494,4 @@
   ✅ **已发布**：`v0.1.90-ffmpeg`（91，APK 95,503,262 字节，sha256 `c6565180…`），tag 指向源码提交 `dec7e14`；raw 清单 + jsDelivr + Range 206 + 资产 digest 复核通过；全量 **1263 例 0 失败**（1 例 opt-in 跳过）。待真机复验 1080x1920 续播场景。
 - **续播 seek 时机热修（2026-11-07，0.1.91-ffmpeg / 92）**：真机 0.1.90 自动回退软解，说明硬解仍失败；根因＝播放页 applyResume 在 prepare/play 之后才 seek，而 NativeEnginePlayer 在 prepare 后就起了 native 播放线程（MediaCodec 已打开）⇒ 又变成“打开后再 flush”。
   修：applyResume 提前到 setMedia 之后、prepare 之前（native 记 pendingSeek，起播时 play(startMs) 在开解码器前 seek）；面包屑改打印 created.kind；硬解开关键换 hardware_decode_v2（0.1.90 的 false 不继承）。
+  ✅ **已发布**：`v0.1.91-ffmpeg`（92，APK 95,503,254 字节，sha256 `630a18a1…`），tag 指向源码提交 `51da0a0`；raw 清单 + jsDelivr + Range 206 + 资产 digest 复核通过；全量 **1263 例 0 失败**（1 例 opt-in 跳过）。待真机复验续播硬解。
