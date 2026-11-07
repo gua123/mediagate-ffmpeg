@@ -779,10 +779,21 @@ class VideoPlayerViewModel(
         // 内核装载与起播整体兜底（2026-10-03 真机"一播放就闪退"）：
         // 内核/解码器在真机上抛出的异常（MediaCodec 初始化失败、容器不支持…）不该让 App 直接消失，
         // 统一降级成播放页的错误卡片 + 中文原因。
+        // 面包屑记**实际内核**（2026-11-07：测试版会忽略请求的 Media3、直接返回 native，
+        // 旧写法打印 kind.label，日志里看起来像"在用 Media3"，把排障带偏了）。
+        val actualKindLabel = if (created.kind == kind) {
+            kind.label
+        } else {
+            created.kind.label + "（请求 " + kind.label + "）"
+        }
         try {
-            Breadcrumbs.mark("开始播放：" + path + "（内核 " + kind.label + "）")
-        created.setDecoderMode(mode)
+            Breadcrumbs.mark("开始播放：" + path + "（内核 " + actualKindLabel + "）")
+            created.setDecoderMode(mode)
             created.setMedia(ref)
+            // 2026-11-07：续播必须在 prepare/play **之前**交给内核。
+            // NativeEnginePlayer 在 prepare 后就会起 native 播放线程；等 play 之后再 seek
+            // 会变成"硬解打开后再 flush"，0.1.89 的首帧失败就是这么来的。
+            applyResume(ref, created)
             created.prepare()
             created.play()
         } catch (e: CancellationException) {
@@ -800,7 +811,6 @@ class VideoPlayerViewModel(
         wasPlaying = true
         endedSaved = false
         startTicker()
-        applyResume(ref, created)
         // R3/R4：TS 索引在后台准备（判定有没有 PCR + 供拖拽预取）；失败不影响播放
         prepareTsIndex(path)
     }

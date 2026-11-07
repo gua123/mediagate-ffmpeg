@@ -129,7 +129,12 @@ class NativeEnginePlayer(
     @Volatile
     private var lastStatus: NativePlayerStatus? = null
 
-    /** 硬解开关（默认开；首帧超时自动关掉，重试走软解）。 */
+    /**
+     * 硬解开关（默认开；首帧超时自动关掉，重试走软解）。
+     *
+     * 2026-11-07：键名带 v2——0.1.90 自动回退会把旧键写成 false，如果沿用旧键，
+     * 新版本一上来就直接软解、永远测不到硬解。换键 = 新版本重新默认开。
+     */
     private val nativePrefs = context.getSharedPreferences("mediagate_native_engine", Context.MODE_PRIVATE)
 
     private val surfaceView: SurfaceView by lazy {
@@ -310,7 +315,7 @@ class NativeEnginePlayer(
             return
         }
         val ready = source ?: return
-        NativeEngine.setHardwareDecode(nativePrefs.getBoolean("hardware_decode", true))
+        NativeEngine.setHardwareDecode(nativePrefs.getBoolean("hardware_decode_v2", true))
         // 续播位置必须在 playSource 之前交给 native：native 会在打开解码器前先 seek，
         // 避免 MediaCodec 打开后再 flush（0.1.89 首帧失败的真机根因）。
         val startAt = pendingSeekMs
@@ -392,8 +397,8 @@ class NativeEnginePlayer(
             // 硬解有输出（可能是被判定迟到丢掉的帧）却一直没上屏：把这台机器的硬解关掉，
             // 下一次重试自动走软解，避免用户一直对着黑屏。
             val hardwareUsed = status?.videoCodec?.contains("mediacodec", ignoreCase = true) == true
-            if (hardwareUsed && nativePrefs.getBoolean("hardware_decode", true)) {
-                nativePrefs.edit().putBoolean("hardware_decode", false).apply()
+            if (hardwareUsed && nativePrefs.getBoolean("hardware_decode_v2", true)) {
+                nativePrefs.edit().putBoolean("hardware_decode_v2", false).apply()
                 _state.value = EngineState.Error(
                     "FFmpeg 硬解 10 秒没有出第一帧，已自动切回软解；点「重试」继续播放。",
                 )
